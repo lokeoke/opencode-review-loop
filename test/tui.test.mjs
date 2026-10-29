@@ -42,3 +42,19 @@ test('Desktop bundle renders RPC results through native dialogs without a model 
   assert.equal(notices[0], 'Processing command…');
   assert.equal(dialogs[0], 'Invalid option; no work executed.');
 });
+
+test('proposed checks start only after explicit client approval', async () => {
+  for (const approved of [false, true]) {
+    const calls = [];
+    let command;
+    const cleanup = plugin.setup({
+      location: { directory: '/project' },
+      client: { rpc: () => ({ command: async (input) => { calls.push(input.text); return input.text === 'start' ? { text: 'Approve npm test?', confirmation: 'start --confirm token' } : { text: 'Started' }; }, events: { on: () => () => {} } }) },
+      keymap: { layer: (factory) => { command = factory().commands[0]; } },
+      ui: { router: { current: () => ({ type: 'session', sessionID: 'fixer' }) }, toast: { show: () => {} }, dialog: { confirm: async () => approved, alert: async () => {} } },
+    });
+    await command.run('start');
+    assert.deepEqual(calls, approved ? ['start', 'start --confirm token'] : ['start']);
+    cleanup();
+  }
+});

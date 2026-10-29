@@ -204,3 +204,36 @@ test('cancellation aborts stalled reviewer creation and releases the worktree', 
   assert.equal((await f.engine.status('fixer')).phase, 'stopped');
   assert.equal(f.engine.activeFor('fixer'), undefined);
 });
+
+test('a nonexistent-tool validation error can recover through a later valid submission', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async () => {
+    const active = f.engine.activeFor('fixer');
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, issues: [], resolutions: [] });
+    f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [
+      { type: 'tool', name: 'submit_placeholder', state: { status: 'error', error: { type: 'tool.execution', message: 'No tool named "submit_placeholder" is currently available. Please use a tool from the available tool list.' } } },
+      { type: 'tool', name: 'review_loop_submit_review', state: { status: 'completed' } },
+    ] }]);
+  });
+  const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
+  await task.done;
+  assert.equal((await f.engine.status('fixer')).phase, 'passed');
+});
+
+test('a prior blocker can remain open after its file is reverted out of the diff', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async (input) => {
+    const active = f.engine.activeFor('fixer'), { id: runId, round } = active.run.state;
+    if (input.sessionID === 'fixer') {
+      await writeFile(join(f.directory, 'app.js'), 'export const value = 1;\n');
+      await f.engine.submitFix('fixer', { runId, round, summary: 'Reverted file.', disputed: [] });
+    } else await f.engine.submitReview('reviewer', {
+      runId, round, complete: true,
+      issues: [{ id: 'value', severity: 'major', file: 'app.js', line: 1, problem: 'Incorrect value.', failure_scenario: 'Callers require three.', suggested_fix: 'Return three.' }],
+      resolutions: round === 1 ? [] : [{ id: 'value', status: 'open', evidence: 'Revert did not implement the fix.' }],
+    });
+  });
+  const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
+  await task.done;
+  assert.match((await f.engine.status('fixer')).reason, /No progress/);
+});

@@ -9,7 +9,7 @@ export default {
       const route = context.ui.router.current();
       return route?.type === 'session' ? route.sessionID : undefined;
     };
-    const display = (text, variant = 'info') => context.ui.toast.show({ title: 'Review loop', message: text, variant, duration: 10_000 });
+    const display = (text, variant) => context.ui.toast.show({ title: 'Review loop', message: text, ...(variant ? { variant } : {}), duration: 10_000 });
     const unsubscribe = rpc.events.on('progress', (event) => {
       if (event.data.sessionID === sessionID()) display(event.data.text);
     });

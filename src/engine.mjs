@@ -193,7 +193,13 @@ export class Engine {
       const old = new Set(before.map((message) => message.id));
       const messages = (await this.ctx.session.context({ sessionID }, { signal })).filter((message) => !old.has(message.id));
       const tools = messages.flatMap((message) => message.content ?? []).filter((part) => part.type === 'tool');
-      const recovered = (part) => ['validation', 'invalid_input'].includes(part.state?.error?.type) && tools.some((later) => later.name === part.name && later.state?.status === 'completed' && tools.indexOf(later) > tools.indexOf(part));
+      const recovered = (part) => {
+        const error = part.state?.error;
+        const invalidInput = ['validation', 'invalid_input'].includes(error?.type);
+        const unknownTool = error?.type === 'tool.execution' && /^No tool named "[a-zA-Z0-9_-]+" is currently available\./.test(error.message ?? '');
+        const submission = role === 'reviewer' ? 'review_loop_submit_review' : 'review_loop_submit_fix';
+        return (invalidInput || unknownTool) && tools.some((later) => later.name === (unknownTool ? submission : part.name) && later.state?.status === 'completed' && tools.indexOf(later) > tools.indexOf(part));
+      };
       if (messages.some((message) => message.error || (message.type === 'assistant' && ['length', 'content-filter', 'error', 'unknown'].includes(message.finish))) || tools.some((part) => part.state?.status === 'error' && !recovered(part))) throw new Error(`${role} turn had an incomplete result or unrecovered tool error.`);
     } catch (error) {
       await this.interrupt(active, sessionID);

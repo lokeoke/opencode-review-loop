@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, symlink, truncate } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -60,4 +60,19 @@ test('changed symlinks are rejected rather than reading outside the worktree', a
   const detached = await GitScope.open(root, 'HEAD');
   assert.equal(detached.branch, null);
   assert.deepEqual((await detached.snapshot()).files, []);
+});
+
+test('unchanged tracked assets above 64 MiB do not consume the untracked fingerprint budget', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'opencode-review-loop-large-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+  git('init', '-b', 'main');
+  await writeFile(join(root, 'asset.bin'), '');
+  await truncate(join(root, 'asset.bin'), 65 * 1024 * 1024);
+  await writeFile(join(root, 'app.js'), 'before');
+  git('add', '.');
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'Initial');
+  await writeFile(join(root, 'app.js'), 'after');
+  const scope = await GitScope.open(root, 'HEAD');
+  assert.deepEqual((await scope.snapshot()).files, ['app.js']);
 });
