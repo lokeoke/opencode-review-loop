@@ -17,8 +17,9 @@ export async function checkPolicyFingerprint(scope) {
       try {
         const stat = await lstat(path);
         if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_CONTROL_BYTES || !await scope.contains(path)) throw new Error('Check control file is not a small regular in-worktree file.');
-        hash.update(await readFile(path));
-      } catch (error) { if (error.code === 'ENOENT') hash.update('absent'); else throw error; }
+        const content = await readFile(path);
+        hash.update(`file:${content.length}\0`).update(content);
+      } catch (error) { if (error.code === 'ENOENT') hash.update('missing\0'); else throw error; }
       hash.update('\0');
     }
     if (directory === scope.root) break;

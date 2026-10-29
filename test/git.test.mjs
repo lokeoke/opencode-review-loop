@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { test } from 'node:test';
 import { randomBytes } from 'node:crypto';
 import { GitScope } from '../src/git.mjs';
+import { checkPolicyFingerprint } from '../src/check-policy.mjs';
 
 test('a pinned scope includes staged, unstaged, and new files without modifying the index', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'opencode-review-loop-git-'));
@@ -44,6 +45,10 @@ test('a pinned scope includes staged, unstaged, and new files without modifying 
   assert.equal(git('diff', '--cached'), staged);
   await writeFile(join(root, 'new.js'), 'export const added = false;\n');
   assert.notEqual((await scope.snapshot()).fingerprint, before.fingerprint);
+  const controls = await checkPolicyFingerprint(scope);
+  await writeFile(join(root, 'Makefile'), 'absent');
+  assert.notEqual(await checkPolicyFingerprint(scope), controls);
+  await rm(join(root, 'Makefile'));
   await writeFile(join(root, '.env'), 'SECRET=not-a-real-secret');
   await assert.rejects(scope.snapshot(), /sensitive/i);
 });
