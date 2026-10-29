@@ -32,6 +32,21 @@ async function branchName(root) {
   catch (error) { if (error.code === 1) return null; throw error; }
 }
 
+// Long lines are delivered in full as consecutive chunks, so reaching the end always means everything was returned.
+function splitDiffLines(text) {
+  return text.split('\n').flatMap((line) => {
+    const chunks = [];
+    for (let start = 0; start < line.length;) {
+      let end = Math.min(start + MAX_DIFF_LINE_CHARS, line.length);
+      const last = line.charCodeAt(end - 1);
+      if (end < line.length && last >= 0xd800 && last <= 0xdbff) end -= 1; // never split a surrogate pair
+      chunks.push(line.slice(start, end));
+      start = end;
+    }
+    return chunks.length ? chunks : [''];
+  });
+}
+
 export class GitScope {
   static async open(directory, base) {
     if (!base || base.startsWith('-')) throw new Error('Invalid base ref.');
@@ -46,6 +61,9 @@ export class GitScope {
   }
 
   constructor(info) { Object.assign(this, info); this.diffCache = new Map(); }
+
+  // Drop cached diffs and path lists; call whenever the working tree may have changed (a snapshot, or any model turn).
+  invalidate() { this.diffCache.clear(); this.pathsCache = undefined; }
 
   // Resource paths are relative to the session directory as OpenCode reports it. Resolve them lexically there,
   // then map anything under that directory onto its canonical form. Deliberately no realpath on the result:
@@ -145,27 +163,18 @@ export class GitScope {
   // One changed file's diff, paged by diff line, for changes too large to embed. `complete` means the end was returned.
   async fileDiff({ path, offset = 1, limit = 150 }) {
     if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error('Invalid diff pagination.');
-    const { added, files } = await this.changedPaths();
+    const { added, files } = this.pathsCache ??= await this.changedPaths();
     if (typeof path !== 'string' || !files.includes(path)) throw new Error('Path is not a changed file in this review.');
-    let text = this.diffCache.get(path);
-    if (text !== undefined) { /* served from this snapshot's cache */ }
-    else if (added.includes(path)) {
-      if (!await this.contains(join(this.root, path))) throw new Error('Path is not a changed file in this review.');
-      text = `New file ${JSON.stringify(path)}:\n${await readFile(join(this.root, path), 'utf8')}`;
-    } else text = await git(this.root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', this.baseSha, '--', path]);
-    this.diffCache.set(path, text);
-    // Long lines are delivered in full as consecutive chunks, so reaching the end always means everything was returned.
-    const lines = text.split('\n').flatMap((line) => {
-      const chunks = [];
-      for (let start = 0; start < line.length;) {
-        let end = Math.min(start + MAX_DIFF_LINE_CHARS, line.length);
-        const last = line.charCodeAt(end - 1);
-        if (end < line.length && last >= 0xd800 && last <= 0xdbff) end -= 1; // never split a surrogate pair
-        chunks.push(line.slice(start, end));
-        start = end;
-      }
-      return chunks.length ? chunks : [''];
-    });
+    let lines = this.diffCache.get(path);
+    if (!lines) {
+      let text;
+      if (added.includes(path)) {
+        if (!await this.contains(join(this.root, path))) throw new Error('Path is not a changed file in this review.');
+        text = `New file ${JSON.stringify(path)}:\n${await readFile(join(this.root, path), 'utf8')}`;
+      } else text = await git(this.root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', this.baseSha, '--', path]);
+      lines = splitDiffLines(text);
+      this.diffCache.set(path, lines);
+    }
     if (offset > lines.length) throw new Error(`Offset ${offset} is beyond the end of this diff (${lines.length} lines).`);
     const page = [];
     let bytes = 0, index = offset - 1;
@@ -180,14 +189,17 @@ export class GitScope {
   }
 
   async snapshot() {
-    const head = (await git(this.root, ['rev-parse', 'HEAD'])).trim();
-    const branch = await branchName(this.root);
+    const [headOut, branch] = await Promise.all([git(this.root, ['rev-parse', 'HEAD']), branchName(this.root)]);
+    const head = headOut.trim();
     if (head !== this.head || branch !== this.branch) throw new Error('Branch or HEAD changed; start a new run.');
-    this.diffCache.clear(); // a new snapshot may follow edits
-    const { added, files } = await this.changedPaths();
+    this.invalidate();
+    const [{ added, files }, numstat] = await Promise.all([
+      this.changedPaths(),
+      git(this.root, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv', '--no-renames', 'HEAD', '--']),
+    ]);
     if (files.length > MAX_REVIEW_FILES) throw new Error(`The change touches more than ${MAX_REVIEW_FILES} files; split it into smaller reviews.`);
     // The encoded --binary fingerprint below is against HEAD; reject binary changes before buffering it.
-    const stats = paths(await git(this.root, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv', '--no-renames', 'HEAD', '--']));
+    const stats = paths(numstat);
     if (stats.some((entry) => entry.startsWith('-\t-\t'))) throw new Error('Binary changes need manual review; no binary diff was buffered.');
     for (const file of files) {
       if (sensitivePath(file)) throw new Error(`Sensitive changed path cannot be reviewed: ${file}`);
@@ -199,10 +211,15 @@ export class GitScope {
         if (relative(this.root, canonical).startsWith(`..${sep}`)) throw new Error('Changed path escapes the worktree.');
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
+    const [workingBinary, cachedBinary, baseDiff] = await Promise.all([
+      git(this.root, ['diff', '--binary', '--no-ext-diff', '--no-textconv', '--no-renames', 'HEAD', '--']),
+      git(this.root, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--binary', '--']),
+      git(this.root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', this.baseSha, '--']),
+    ]);
     const hash = createHash('sha256').update(`${head}\0${branch}\0`);
     // HEAD is pinned: Git's binary working diff identifies all tracked changes,
     // including files outside the review diff. Unchanged assets need not be reread in JS.
-    hash.update(await git(this.root, ['diff', '--binary', '--no-ext-diff', '--no-textconv', '--no-renames', 'HEAD', '--']));
+    hash.update(workingBinary);
     let bytes = 0;
     for (const file of added.sort()) {
       hash.update(file).update('\0');
@@ -221,8 +238,8 @@ export class GitScope {
       } catch (error) { if (error.code === 'ENOENT') hash.update('deleted'); else throw error; }
       hash.update('\0');
     }
-    const index = createHash('sha256').update(await git(this.root, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--binary', '--'])).digest('hex');
-    let diff = await git(this.root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', this.baseSha, '--']);
+    const index = createHash('sha256').update(cachedBinary).digest('hex');
+    let diff = baseDiff;
     if (/^Binary files .* differ$/m.test(diff)) throw new Error('Binary changes need manual review.');
     for (const file of added.sort()) {
       const content = await readFile(join(this.root, file), 'utf8');

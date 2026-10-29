@@ -214,6 +214,7 @@ export class Engine {
     const signal = AbortSignal.any([active.abort.signal, AbortSignal.timeout(PHASE_TIMEOUT_MS)]);
     const before = await this.ctx.session.context({ sessionID }, { signal });
     active.turnSessionID = sessionID;
+    active.scope.invalidate();
     try {
       await this.ctx.session.prompt({ sessionID, text, metadata: { reviewLoop: { id: active.run.state.id, round: active.run.state.round, role } }, delivery: 'queue' }, { signal });
       await this.ctx.session.wait({ sessionID }, { signal });

@@ -200,3 +200,14 @@ test('a long line is never split inside a surrogate pair', async (t) => {
   assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(text), 'no lone surrogate');
   assert.ok(text.includes('😀'));
 });
+
+test('a cached diff is dropped by invalidate so edits made after a read are visible', async (t) => {
+  const root = await oversizedFixture(t, 0);
+  await writeFile(join(root, 'seed.txt'), 'first');
+  const scope = await GitScope.open(root, 'HEAD');
+  assert.match((await scope.fileDiff({ path: 'seed.txt' })).text, /\+first/);
+  await writeFile(join(root, 'seed.txt'), 'second');
+  assert.match((await scope.fileDiff({ path: 'seed.txt' })).text, /\+first/, 'served from cache until invalidated');
+  scope.invalidate();
+  assert.match((await scope.fileDiff({ path: 'seed.txt' })).text, /\+second/);
+});

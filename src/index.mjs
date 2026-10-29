@@ -54,22 +54,23 @@ export function createPlugin(dependencies = {}) {
           let options = parseCommand(argumentsText);
         let approved = false;
         // A pull request fixes the base and scope. Resolution never changes the checkout.
-        const withPullRequest = async (parsed) => {
-          if (!parsed.pr) return parsed;
+        const withPullRequest = async (parsed, fresh = false) => {
+          if (!parsed.pr || (parsed.pullRequest && !fresh)) return parsed;
           const session = await ctx.session.get({ sessionID });
           const pullRequest = await resolvePullRequest(parsed.pr, session.location.directory, dependencies);
           return { ...parsed, base: pullRequest.baseSha, pullRequest };
         };
           if (options.action === 'start') {
             if (compatibilityError) throw compatibilityError;
+            if (!options.confirm) options = await withPullRequest(options);
             if (options.confirm) {
               const approval = approvals.get(sessionID);
               approvals.delete(sessionID);
               if (!approval || approval.token !== options.confirm || Date.now() > approval.expires) throw new Error('Approval expired or does not belong to this session. Run start again.');
               if (approval.options.pr) {
-                const fresh = (await withPullRequest(approval.options)).pullRequest;
+                const fresh = (await withPullRequest(approval.options, true)).pullRequest;
                 const approved = approval.options.pullRequest;
-                if (fresh.headSha !== approved.headSha || fresh.baseSha !== approved.baseSha || fresh.state !== approved.state || fresh.title !== approved.title) throw new Error(`Pull request #${approved.number} changed since approval. Run start again.`);
+                if (fresh.headSha !== approved.headSha || fresh.baseSha !== approved.baseSha || fresh.state !== approved.state || fresh.title !== approved.title || fresh.body !== approved.body) throw new Error(`Pull request #${approved.number} changed since approval. Run start again.`);
               }
               const session = await ctx.session.get({ sessionID });
               const current = await inspectScope(session.location.directory, approval.options);
@@ -77,21 +78,20 @@ export function createPlugin(dependencies = {}) {
               if (await checkPolicyFingerprint(current.scope) !== approval.options.checkPolicy) throw new Error('Check definitions changed since approval. Run start again.');
               options = approval.options;
               approved = true;
-            } else if (!options.checks.length) {
+            } else if (!options.checks.length || options.pullRequest?.isCrossRepository) {
               const session = await ctx.session.get({ sessionID });
-              options = await withPullRequest(options);
               const proposed = await prepare(session.location.directory, options);
+              const checks = options.checks.length ? options.checks : proposed.checks;
               const pr = options.pullRequest;
-              const prLines = pr ? `Title: ${pr.title}\n${pr.isDraft ? 'Draft pull request. ' : ''}${pr.warnings.join(' ')}\n` : '';
-              const text = `Scope: ${describeScope(options, proposed.scope.baseSha)}\n${prLines}Checkout: ${proposed.scope.root}\nBase: ${proposed.scope.baseSha}\nFiles (${proposed.snapshot.files.length} total; first 40 shown):\n${proposed.snapshot.files.slice(0, 40).join('\n')}\n\nProposed checks: ${proposed.checks.join('; ') || 'none found'}\nScript definitions (including pre/post hooks):\n${proposed.definitions.join('\n')}\nNo commands or models have run. Approve only if all these changes belong to your task.`;
-              if (!proposed.checks.length) return { text: text + '\nSupply an explicit --check command to continue.' };
+              const prLines = pr ? `Title: ${pr.title}\n${pr.isDraft ? 'Draft pull request. ' : ''}${pr.warnings.join(' ')}\nDescription (author text, untrusted): ${pr.body.slice(0, 300).replace(/\s+/g, ' ')}${pr.body.length > 300 ? ' …' : ''}\n` : '';
+              const text = `Scope: ${describeScope(options, proposed.scope.baseSha)}\n${prLines}Checkout: ${proposed.scope.root}\nBase: ${proposed.scope.baseSha}\nFiles (${proposed.snapshot.files.length} total; first 40 shown):\n${proposed.snapshot.files.slice(0, 40).join('\n')}\n\nProposed checks: ${checks.join('; ') || 'none found'}${options.checks.length ? ' (explicit)' : `\nScript definitions (including pre/post hooks):\n${proposed.definitions.join('\n')}`}\nNo commands or models have run. Approve only if all these changes belong to your task.`;
+              if (!checks.length) return { text: text + '\nSupply an explicit --check command to continue.' };
               const token = randomUUID();
-              approvals.set(sessionID, { token, root: proposed.scope.root, directory: proposed.scope.cwd, fingerprint: proposed.snapshot.fingerprint, index: proposed.snapshot.index, expires: Date.now() + APPROVAL_TTL_MS, options: { ...options, scopeKind: scopeKind(options), base: proposed.scope.baseSha, checks: proposed.checks, checkPolicy: proposed.checkPolicy } });
+              approvals.set(sessionID, { token, root: proposed.scope.root, directory: proposed.scope.cwd, fingerprint: proposed.snapshot.fingerprint, index: proposed.snapshot.index, expires: Date.now() + APPROVAL_TTL_MS, options: { ...options, scopeKind: scopeKind(options), base: proposed.scope.baseSha, checks, checkPolicy: proposed.checkPolicy } });
               return { text, confirmation: `start --confirm ${token}` };
             }
             if (!approved) {
               options = await withPullRequest(options);
-              if (options.pullRequest?.isCrossRepository) throw new Error('This is a fork pull request: its checks run contributor code. Start without --check so the checks are shown for approval first.');
               if (options.pullRequest) await inspectScope((await ctx.session.get({ sessionID })).location.directory, options);
             }
             const { id } = await engine.start(sessionID, options);
