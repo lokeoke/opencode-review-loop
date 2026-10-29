@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 
 export const DEFAULT_STATE = join(process.env.XDG_STATE_HOME || join(homedir(), '.local/state'), 'opencode-review-loop');
@@ -20,11 +20,11 @@ export class RunStore {
     const lock = join(this.directory, `${key}.lock`);
     try { await mkdir(lock, { mode: 0o700 }); }
     catch (error) {
-      if (error.code === 'EEXIST') throw new Error('An active or interrupted run owns this worktree. Inspect status; do not remove a live lock.');
+      if (error.code === 'EEXIST') throw new Error('An active or interrupted run owns this worktree. Inspect status; use the explicit recovery script only after verifying all old processes stopped.');
       throw error;
     }
     const nonce = randomUUID();
-    try { await writeFile(join(lock, 'owner.json'), JSON.stringify({ id, nonce, pid: process.pid, worktree }), { mode: 0o600, flag: 'wx' }); }
+    try { await writeFile(join(lock, 'owner.json'), JSON.stringify({ id, nonce, pid: process.pid, hostname: hostname(), worktree }), { mode: 0o600, flag: 'wx' }); }
     catch (error) { await rm(lock, { recursive: true, force: true }); throw error; }
     let released = false, releasePromise, writes = Promise.resolve();
     const atomic = async (path, content) => {
@@ -57,5 +57,34 @@ export class RunStore {
         return releasePromise;
       },
     };
+  }
+
+  async recover(worktree, id, { processesStopped = false } = {}) {
+    if (!processesStopped) throw new Error('Explicit confirmation that all old run/check processes stopped is required.');
+    if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('Invalid run ID.');
+    const key = this.key(worktree), lock = join(this.directory, `${key}.lock`);
+    const recovery = `${lock}.recovery`;
+    await mkdir(recovery, { mode: 0o700 });
+    try {
+      const owner = JSON.parse(await readFile(join(lock, 'owner.json'), 'utf8'));
+      if (owner.id !== id || owner.worktree !== worktree || (owner.hostname && owner.hostname !== hostname())) throw new Error('Lock identity does not match this local run.');
+      if (!Number.isSafeInteger(owner.pid) || owner.pid < 1) throw new Error('Cannot establish lock-owner identity.');
+      try { process.kill(owner.pid, 0); throw new Error('Lock owner is still alive; recovery refused.'); }
+      catch (error) { if (error.code !== 'ESRCH') throw error; }
+      const current = JSON.parse(await readFile(join(lock, 'owner.json'), 'utf8'));
+      if (current.nonce !== owner.nonce) throw new Error('Lock ownership changed during recovery.');
+      const state = await this.read(worktree, id) ?? await this.read(worktree);
+      if (state?.id === id) {
+        const stopped = JSON.stringify({ ...state, phase: 'stopped', reason: 'Explicit stale-run recovery; no execution resumed.' }, null, 2);
+        for (const suffix of [`.${id}`, '']) {
+          const target = join(this.directory, `${key}${suffix}.json`), temporary = `${target}.${randomUUID()}.tmp`;
+          await writeFile(temporary, stopped, { mode: 0o600, flag: 'wx' });
+          await rename(temporary, target);
+        }
+      }
+      const archive = `${lock}.recovered-${randomUUID()}`;
+      await rename(lock, archive);
+      return archive;
+    } finally { await rm(recovery, { recursive: true }); }
   }
 }

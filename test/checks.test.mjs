@@ -14,3 +14,8 @@ test('verification has bounded execution and supports cancellation', async () =>
   controller.abort();
   await assert.rejects(checking, /cancel/i);
 });
+
+test('signalling failures reject the check instead of escaping an exit callback', async (t) => {
+  t.mock.method(process, 'kill', () => { throw Object.assign(new Error('Signalling refused'), { code: 'EPERM' }); });
+  await assert.rejects(runCheck('exit 0', process.cwd()), (error) => error.cleanupUnconfirmed === true);
+});

@@ -55,4 +55,9 @@ test('changed symlinks are rejected rather than reading outside the worktree', a
   const scope = await GitScope.open(root, 'main');
   await assert.rejects(scope.snapshot(), /symlink/i);
   assert.doesNotMatch(await scope.source({ operation: 'search', query: 'localhost' }), /127\.0\.0\.1/);
+  await rm(join(root, 'external'));
+  git('checkout', '--detach');
+  const detached = await GitScope.open(root, 'HEAD');
+  assert.equal(detached.branch, null);
+  assert.deepEqual((await detached.snapshot()).files, []);
 });

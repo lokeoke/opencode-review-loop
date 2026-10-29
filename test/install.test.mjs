@@ -13,7 +13,7 @@ test('one global loader imports the plugin without changing user config and can 
   const config = join(configDirectory, 'opencode.json');
   await writeFile(config, '{"shell":"/bin/zsh","unrelated":true}');
   const path = await install({ configDirectory, sourceRoot });
-  assert.equal((await import(pathToFileURL(path).href)).default.id, 'opencode.review-loop');
+  assert.equal((await import(pathToFileURL(path).href)).default.id, 'review-loop');
   assert.equal(await readFile(config, 'utf8'), '{"shell":"/bin/zsh","unrelated":true}');
   await install({ configDirectory, sourceRoot });
   await install({ configDirectory, sourceRoot, uninstall: true });

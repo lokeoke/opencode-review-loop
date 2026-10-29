@@ -174,3 +174,33 @@ test('location plugin instances share session ownership without unloading each o
     await task.done;
   }
 });
+
+test('disposal during model discovery cannot register a late run', async (t) => {
+  const f = await fixture(t);
+  let release, entered;
+  const waiting = new Promise((resolve) => { entered = resolve; });
+  const original = f.ctx.model.list;
+  f.ctx.model.list = async () => { entered(); await new Promise((resolve) => { release = resolve; }); return original(); };
+  const starting = f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
+  await waiting;
+  await f.engine.dispose();
+  release();
+  await assert.rejects(starting, /unloaded/);
+  assert.equal(f.engine.activeFor('fixer'), undefined);
+});
+
+test('cancellation aborts stalled reviewer creation and releases the worktree', async (t) => {
+  const f = await fixture(t);
+  let entered;
+  const waiting = new Promise((resolve) => { entered = resolve; });
+  f.ctx.session.create = async (_input, { signal }) => {
+    entered();
+    await new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('Creation aborted')), { once: true }));
+  };
+  const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
+  await waiting;
+  await f.engine.stop('fixer');
+  await task.done;
+  assert.equal((await f.engine.status('fixer')).phase, 'stopped');
+  assert.equal(f.engine.activeFor('fixer'), undefined);
+});

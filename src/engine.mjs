@@ -85,6 +85,7 @@ export class Engine {
       await this.ctx.session.wait({ sessionID: active.fixerID }, { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(PHASE_TIMEOUT_MS)]) });
       await this.assertSession(active, active.fixerID);
       active.initial = await scope.snapshot();
+      run.state.files = active.initial.files;
       if (!active.initial.files.length) throw new Error('No changes against the selected base.');
       await this.progress(active, `Scope: ${active.initial.files.length} files against ${scope.baseSha}. Reviewer: ${active.reviewerModel.providerID}/${active.reviewerModel.id}.`);
       if (!active.checks?.length) throw new Error('Checks need approval. Re-run with explicit --check commands (for example --check "npm test"). No checks or model calls were executed.');
@@ -233,6 +234,12 @@ export class Engine {
     if (!active) return;
     active.run.stop(reason);
     active.abort.abort();
+    if (active.run.state.pendingProcessPID) {
+      try { process.kill(-active.run.state.pendingProcessPID, 'SIGKILL'); }
+      catch (error) { if (error.code !== 'ESRCH') throw new Error('Check-process cleanup remains unconfirmed.'); }
+      active.run.state.pendingProcessPID = undefined;
+      active.pendingInterruptID = undefined;
+    }
     const target = active.pendingInterruptID ?? active.turnSessionID;
     if (target) await this.interrupt(active, target);
     if (active.finished && !active.pendingInterruptID) {

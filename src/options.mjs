@@ -31,7 +31,7 @@ export function parseCommand(input = '') {
   for (let i = 0; i < args.length; i++) {
     const key = args[i];
     if (key === '--allow-same-family') { result.allowSameFamily = true; continue; }
-    if (!['--base', '--goal', '--check', '--reviewer'].includes(key)) throw new Error(`Unknown option: ${key}`);
+    if (!['--base', '--goal', '--check', '--reviewer', '--confirm'].includes(key)) throw new Error(`Unknown option: ${key}`);
     if (key !== '--check' && seen.has(key)) throw new Error(`Duplicate option: ${key}`);
     seen.add(key);
     const value = args[++i];
