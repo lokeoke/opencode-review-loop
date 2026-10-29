@@ -2,6 +2,7 @@
 const { Plugin, Command } = require('@opencode/plugin/gui');
 const { Rpc } = require('@opencode/plugin/rpc');
 const contract = Rpc.define(__REVIEW_LOOP_CONTRACT__);
+const command = __REVIEW_LOOP_COMMAND__;
 
 exports.default = Plugin.define({
   setup(ctx) {
@@ -10,7 +11,7 @@ exports.default = Plugin.define({
       if (event.data.sessionID === ctx.sessions.current()?.id) show(event.data.text);
     });
     ctx.add(Command, {
-      id: 'control', title: 'Review loop', slash: { name: 'review-loop', arguments: true },
+      id: 'control', title: 'Review loop', description: command.description, slash: { name: command.name, arguments: true },
       async run(input) {
         const session = ctx.sessions.current();
         if (!session) { show('Open an existing Build session first.'); return; }

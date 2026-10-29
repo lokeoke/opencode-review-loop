@@ -1,4 +1,5 @@
 import { ReviewLoop } from './rpc.mjs';
+import { COMMAND_DESCRIPTION, COMMAND_NAME } from './command.mjs';
 
 export default {
   id: 'opencode.review-loop.tui',
@@ -16,8 +17,9 @@ export default {
     context.keymap.layer(() => ({
       mode: 'global', priority: 20,
       commands: [{
-        id: 'review-loop.control', title: 'Review loop', palette: true,
-        slash: { name: 'review-loop', arguments: true },
+        // The keymap command has no documented description field, so the title carries it.
+        id: `${COMMAND_NAME}.control`, title: `Review loop: ${COMMAND_DESCRIPTION}`, palette: true,
+        slash: { name: COMMAND_NAME, arguments: true },
         async run(input) {
           const id = sessionID();
           if (!id) { display('Open an existing Build session first.', 'error'); return; }

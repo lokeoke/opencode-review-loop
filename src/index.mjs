@@ -81,22 +81,12 @@ export default {
       } catch (error) { text = `Review loop: ${error.message}\nUsage: /review-loop start [--base main] [--check "npm test"]`; }
       return { text };
     };
+    // The TUI and Desktop parts own the /review-loop slash command and call this RPC. Registering a slash command here
+    // as well would show two rows with different behaviour.
     if (ctx.rpc?.register) {
       const registration = await ctx.rpc.register(ReviewLoop, { command });
       engine.report = (sessionID, text) => registration.events.emit('progress', { sessionID, text });
-    }
-    await ctx.command.transform((editor) => {
-      editor.add({
-        name: 'review-loop',
-        description: 'Start, inspect, or stop a controlled Copilot review loop',
-        async execute({ sessionID, prompt }) {
-          const result = await command({ sessionID, text: prompt.text });
-          const text = result.text + (result.confirmation ? `\nTo approve: /review-loop ${result.confirmation}` : '');
-          await engine.report?.(sessionID, text);
-          await ctx.session.synthetic({ sessionID, text, resume: false });
-        },
-      });
-    });
+    } else console.warn('[review-loop] This host offers no plugin RPC, so no /review-loop command is available. Check that the plugin reports its tui or gui part as active.');
     return () => engine.dispose();
   },
 };

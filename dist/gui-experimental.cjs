@@ -2,6 +2,7 @@
 const { Plugin, Command } = require('@opencode/plugin/gui');
 const { Rpc } = require('@opencode/plugin/rpc');
 const contract = Rpc.define({"id":"review-loop","methods":{"command":{"input":{"type":"object","properties":{"sessionID":{"type":"string"},"text":{"type":"string"}},"required":["sessionID","text"],"additionalProperties":false},"output":{"type":"object","properties":{"text":{"type":"string"},"confirmation":{"type":"string"}},"required":["text"],"additionalProperties":false}}},"events":{"progress":{"schema":{"type":"object","properties":{"sessionID":{"type":"string"},"text":{"type":"string"}},"required":["sessionID","text"],"additionalProperties":false}}}});
+const command = {"name":"review-loop","description":"Start, inspect, or stop a controlled Copilot review loop"};
 
 exports.default = Plugin.define({
   setup(ctx) {
@@ -10,7 +11,7 @@ exports.default = Plugin.define({
       if (event.data.sessionID === ctx.sessions.current()?.id) show(event.data.text);
     });
     ctx.add(Command, {
-      id: 'control', title: 'Review loop', slash: { name: 'review-loop', arguments: true },
+      id: 'control', title: 'Review loop', description: command.description, slash: { name: command.name, arguments: true },
       async run(input) {
         const session = ctx.sessions.current();
         if (!session) { show('Open an existing Build session first.'); return; }
