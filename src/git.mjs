@@ -2,13 +2,15 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { lstat, readFile, readlink, realpath } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const exec = promisify(execFile);
 const MAX_GIT_OUTPUT = 8 * 1024 * 1024;
 const MAX_REVIEW_BYTES = 192 * 1024;
 const MAX_SOURCE_BYTES = 64 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 15_000;
+const MAX_SOURCE_FILE_BYTES = 512 * 1024;
+const MAX_SOURCE_RESPONSE_BYTES = 32 * 1024;
 export const sensitivePath = (file) => /(^|\/)(\.env($|\.)|\.git($|\/)|id_(rsa|ed25519)$)|\.(pem|key|p12|pfx)$/i.test(file);
 
 async function git(cwd, args) {
@@ -30,6 +32,62 @@ export class GitScope {
   }
 
   constructor(info) { Object.assign(this, info); }
+
+  async contains(path) {
+    const candidate = resolve(this.cwd, path);
+    if (sensitivePath(relative(this.root, candidate))) return false;
+    let existing = candidate;
+    while (true) {
+      try {
+        const canonical = await realpath(existing);
+        const rel = relative(this.root, canonical);
+        return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+      } catch (error) {
+        if (error.code !== 'ENOENT') return false;
+        const parent = resolve(existing, '..');
+        if (parent === existing) return false;
+        existing = parent;
+      }
+    }
+  }
+
+  async source({ operation, path = '', query = '', offset = 1, limit = 150 }) {
+    if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error('Invalid source pagination.');
+    const files = [...new Set(paths(await git(this.root, ['ls-files', '--cached', '--others', '--exclude-standard', '-z'])))].filter((file) => !sensitivePath(file)).sort();
+    if (operation === 'list') return files.slice(offset - 1, offset - 1 + limit).join('\n') + `\n(${files.length} source paths total; paginate with offset/limit)`;
+    if (!['read', 'search'].includes(operation)) throw new Error('Use list, read, or search.');
+    if (operation === 'read' && (!files.includes(path) || path.includes('\\'))) throw new Error('Path is not an allowed source file.');
+    if (operation === 'search' && (typeof query !== 'string' || !query || query.length > 200)) throw new Error('Provide a literal search query of 1–200 characters.');
+    const output = [];
+    let matches = 0, bytes = 0, scanned = 0;
+    for (const file of operation === 'read' ? [path] : files) {
+      const absolute = join(this.root, file);
+      if (!await this.contains(absolute)) throw new Error('Source path escapes the worktree.');
+      let stat;
+      try { stat = await lstat(absolute); }
+      catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SOURCE_FILE_BYTES) {
+        if (operation === 'read') throw new Error('Source is a symlink, non-file, or exceeds the file budget.');
+        continue;
+      }
+      scanned += stat.size;
+      if (scanned > MAX_SOURCE_BYTES) throw new Error('Search exceeded source budget.');
+      const content = await readFile(absolute, 'utf8');
+      if (content.includes('\0')) { if (operation === 'read') throw new Error('Binary source is unsupported.'); continue; }
+      const lines = content.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        if (operation === 'read' || lines[i].includes(query)) {
+          matches += 1;
+          if (matches < offset) continue;
+          const line = `${file}:${i + 1}: ${lines[i]}`;
+          bytes += Buffer.byteLength(line);
+          if (output.length >= limit || bytes > MAX_SOURCE_RESPONSE_BYTES) return output.join('\n') + '\n[More source/matches available; paginate.]';
+          output.push(line);
+        }
+      }
+    }
+    return output.join('\n') || '[No matching source lines.]';
+  }
 
   async snapshot() {
     const head = (await git(this.root, ['rev-parse', 'HEAD'])).trim();

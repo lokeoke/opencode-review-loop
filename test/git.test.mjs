@@ -25,6 +25,10 @@ test('a pinned scope includes staged, unstaged, and new files without modifying 
   assert.deepEqual(before.files, ['app.js', 'new.js']);
   assert.match(before.diff, /value = 3/);
   assert.match(before.diff, /added = true/);
+  assert.match(await scope.source({ operation: 'read', path: 'app.js' }), /value = 3/);
+  assert.match(await scope.source({ operation: 'search', query: 'added' }), /new.js:1/);
+  await assert.rejects(scope.source({ operation: 'read', path: '../outside' }), /path|source/i);
+  await assert.rejects(scope.source({ operation: 'read', path: '.git/config' }), /path|source/i);
   assert.equal(git('diff', '--cached'), staged);
   await writeFile(join(root, 'new.js'), 'export const added = false;\n');
   assert.notEqual((await scope.snapshot()).fingerprint, before.fingerprint);

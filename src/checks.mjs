@@ -12,6 +12,7 @@ export function runCheck(command, cwd, { signal, timeoutMs = CHECK_TIMEOUT_MS } 
     const child = spawn('/bin/sh', ['-c', command], { cwd, detached: true, stdio: 'ignore' });
     let failure, killTimer;
     const kill = (kind) => {
+      if (!Number.isInteger(child.pid)) return;
       try { process.kill(-child.pid, kind); }
       catch (error) { if (error.code !== 'ESRCH') throw error; }
     };
