@@ -26,9 +26,11 @@ test('stop never sends a signal to a recorded process-group number after failed 
   const kill = t.mock.method(process, 'kill', () => { throw Object.assign(new Error('Cleanup refused'), { code: 'EPERM' }); });
   const task = await engine.start('uncertain-fixer', { base: 'HEAD', checks: ['exit 0'] });
   await task.done;
-  assert.ok((await engine.status('uncertain-fixer')).pendingProcessPID);
+  const state = await engine.status('uncertain-fixer');
+  assert.ok(state.pendingProcessPID);
+  assert.equal(engine.activeFor('uncertain-fixer'), undefined, 'the fixer session must not stay locked by an uncertain child');
   const before = kill.mock.callCount();
-  await assert.rejects(engine.stop('uncertain-fixer'), /never signalled again/);
-  assert.equal(kill.mock.callCount(), before);
-  // The intentionally retained claim is isolated in this test process and owned temp directory.
+  await engine.stop('uncertain-fixer');
+  assert.equal(kill.mock.callCount(), before, 'a recorded process-group number is never signalled again');
+  await assert.rejects(engine.start('uncertain-fixer', { base: 'HEAD', checks: ['exit 0'] }), /active or interrupted run/);
 });

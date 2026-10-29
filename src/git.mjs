@@ -116,10 +116,9 @@ export class GitScope {
     const added = paths(await git(this.root, ['ls-files', '--others', '--exclude-standard', '-z']));
     const changed = paths(await git(this.root, ['diff', '--name-only', '--no-renames', '-z', this.baseSha, '--']));
     const files = [...new Set([...changed, ...added])].sort();
-    for (const ref of new Set([this.baseSha, head])) {
-      const stats = paths(await git(this.root, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv', '--no-renames', ref, '--']));
-      if (stats.some((entry) => entry.startsWith('-\t-\t'))) throw new Error('Binary changes need manual review; no binary diff was buffered.');
-    }
+    // The encoded --binary fingerprint below is against HEAD; reject binary changes before buffering it.
+    const stats = paths(await git(this.root, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv', '--no-renames', 'HEAD', '--']));
+    if (stats.some((entry) => entry.startsWith('-\t-\t'))) throw new Error('Binary changes need manual review; no binary diff was buffered.');
     for (const file of files) {
       if (sensitivePath(file)) throw new Error(`Sensitive changed path cannot be reviewed: ${file}`);
       try {

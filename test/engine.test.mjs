@@ -259,6 +259,28 @@ test('regressions may be reported in unchanged source with explicit changed-code
   assert.match(state.reason, /disputed/);
 });
 
+test('unchanged-file evidence must point at existing lines', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async () => {
+    const active = f.engine.activeFor('fixer'), { id: runId, round } = active.run.state;
+    const issue = { id: 'helper', severity: 'major', file: 'helper.js', line: 999, problem: 'Null dereference.', failure_scenario: 'The caller passes undefined.', suggested_fix: 'Validate.', introduced_by: { file: 'app.js', line: 1, explanation: 'The changed caller passes undefined.' } };
+    await assert.rejects(f.engine.submitReview('reviewer', { runId, round, complete: true, issues: [issue], resolutions: [] }), /does not exist/);
+    await f.engine.submitReview('reviewer', { runId, round, complete: true, issues: [], resolutions: [] });
+  });
+  const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
+  await task.done;
+  assert.equal((await f.engine.status('fixer')).phase, 'passed');
+});
+
+test('the final report is always delivered to the transcript even when an RPC channel exists', async (t) => {
+  const f = await fixture(t);
+  f.ctx.session.wait = async () => {};
+  f.engine.report = async () => {};
+  const task = await f.engine.start('fixer', { base: 'main', checks: [] });
+  await task.done;
+  assert.match(f.reports.at(-1), /Review loop STOPPED/);
+});
+
 test('a modified approved launch definition is never executed on the next fix pass', async (t) => {
   const f = await fixture(t);
   f.setPrompt(async (input) => {
@@ -275,7 +297,7 @@ test('a modified approved launch definition is never executed on the next fix pa
   assert.equal(state.checks[1].results.length, 0);
 });
 
-test('progress history is bounded and terminal feedback has only one delivery channel', async (t) => {
+test('progress history is bounded and each delivery channel receives the terminal report once', async (t) => {
   const f = await fixture(t);
   let release;
   f.ctx.session.wait = async () => new Promise((resolve) => { release = resolve; });
@@ -289,5 +311,5 @@ test('progress history is bounded and terminal feedback has only one delivery ch
   assert.equal(state.progressDropped, 2);
   await f.engine.stop('fixer'); release(); await task.done;
   assert.equal(notifications.filter((text) => text.startsWith('Review loop STOPPED')).length, 1);
-  assert.deepEqual(f.reports, []);
+  assert.equal(f.reports.filter((text) => text.startsWith('Review loop STOPPED')).length, 1, 'transcript copy is delivered once, never skipped');
 });

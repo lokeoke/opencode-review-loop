@@ -45,6 +45,19 @@ export class RunStore {
         writes = write.catch(() => {}); // The caller receives the rejection; later terminal-state writes may still succeed.
         return write;
       },
+      orphan: (pid) => {
+        if (releasePromise) return releasePromise;
+        released = true;
+        releasePromise = (async () => {
+          await writes;
+          const path = join(lock, 'owner.json');
+          const owner = JSON.parse(await readFile(path, 'utf8'));
+          if (owner.nonce !== nonce) throw new Error('Worktree lease ownership changed.');
+          // Keep the claim for human recovery; the PID is only a liveness hint and is never signalled.
+          await atomic(path, JSON.stringify({ ...owner, pid, orphaned: true }));
+        })();
+        return releasePromise;
+      },
       release: () => {
         if (releasePromise) return releasePromise;
         released = true;

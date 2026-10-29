@@ -25,10 +25,10 @@ export class Run {
     this.state.fix = undefined;
   }
 
-  submitReview(result) {
+  submitReview(result, { validated = false } = {}) {
     this.requirePhase('reviewing');
     if (this.state.submission) throw new Error('Review already submitted.');
-    this.state.submission = structuredClone(validateReview(result));
+    this.state.submission = structuredClone(validated ? result : validateReview(result));
   }
 
   reviewCompleted(fingerprint) {

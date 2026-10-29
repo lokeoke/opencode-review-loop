@@ -26,6 +26,9 @@ If a blocking finding is unsupported or requires a material scope/security/data 
 Do not stage, commit, push, merge, or run shell commands. The controller runs the approved checks.
 Do not edit ignored files, dependencies, Git control files, or agent/runtime instructions/configuration.
 If a fix needs such a change, report the finding as disputed for human takeover.
+Check/test launch controls are protected and cannot be edited automatically: package.json, .npmrc,
+Makefile/GNUmakefile, pytest/tox/pyproject/setup files, conftest.py, Jest/Vitest/ESLint/Babel/Playwright/TypeScript
+configuration, pom.xml, build.gradle and go.mod. Do not attempt those edits; report a disputed finding instead.
 Use the existing read/edit tools. Do not delegate. Call review_loop_submit_fix exactly once,
 then finish immediately. The controller will verify the final files and request re-review.
 Submission runId=${active.run.state.id}, round=${active.run.state.round}.

@@ -3,6 +3,11 @@ export const MAX_TEXT = 4000;
 export const SEVERITIES = ['blocker', 'major', 'minor'];
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
 
+function relativePath(file, label) {
+  text(file, label);
+  if (file.startsWith('/') || file.includes('\\') || file.split('/').some((part) => part === '..' || part === '.git' || part === '')) throw new Error(`${label} must be worktree-relative.`);
+}
+
 function text(value, label) {
   if (typeof value !== 'string' || !value.trim() || value.length > MAX_TEXT) throw new Error(`Invalid ${label}.`);
 }
@@ -20,13 +25,11 @@ export function validateReview(value) {
     if (!ID.test(issue.id) || ids.has(issue.id)) throw new Error('Invalid or duplicate finding id.');
     ids.add(issue.id);
     if (!SEVERITIES.includes(issue.severity)) throw new Error('Invalid severity.');
-    text(issue.file, 'file');
-    if (issue.file.startsWith('/') || issue.file.includes('\\') || issue.file.split('/').some((part) => part === '..' || part === '.git' || part === '')) throw new Error('Finding path must be worktree-relative.');
+    relativePath(issue.file, 'Finding path');
     if (!Number.isSafeInteger(issue.line) || issue.line < 1) throw new Error('Invalid line.');
     for (const key of ['problem', 'failure_scenario', 'suggested_fix']) text(issue[key], key);
-    if (issue.introduced_by !== undefined) {
-      text(issue.introduced_by.file, 'introduced_by file');
-      if (issue.introduced_by.file.startsWith('/') || issue.introduced_by.file.includes('\\') || issue.introduced_by.file.split('/').includes('..')) throw new Error('Introduced-by path must be worktree-relative.');
+    if (issue.introduced_by !== undefined && issue.introduced_by !== null) {
+      relativePath(issue.introduced_by.file, 'Introduced-by path');
       if (!Number.isSafeInteger(issue.introduced_by.line) || issue.introduced_by.line < 1) throw new Error('Invalid introduced-by line.');
       text(issue.introduced_by.explanation, 'causal explanation');
     }
@@ -54,8 +57,11 @@ function object(properties) {
   return { type: 'object', properties, required: Object.keys(properties), additionalProperties: false };
 }
 const array = (items) => ({ type: 'array', items, maxItems: MAX_FINDINGS });
-const finding = object({ id, severity: { enum: SEVERITIES }, file: string, line: { type: 'integer', minimum: 1 }, problem: string, failure_scenario: string, suggested_fix: string });
-finding.properties.introduced_by = object({ file: string, line: { type: 'integer', minimum: 1 }, explanation: string });
+const finding = object({
+  id, severity: { enum: SEVERITIES }, file: string, line: { type: 'integer', minimum: 1 }, problem: string, failure_scenario: string, suggested_fix: string,
+  // Nullable but required: strict tool-schema providers need every property listed.
+  introduced_by: { anyOf: [{ type: 'null' }, object({ file: string, line: { type: 'integer', minimum: 1 }, explanation: string })] },
+});
 export const REVIEW_SCHEMA = object({
   runId: id,
   round: { type: 'integer', minimum: 1 },

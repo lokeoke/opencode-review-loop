@@ -113,7 +113,7 @@ export class Engine {
           await this.progress(active, `Round ${run.state.round + 1}/${run.state.maxReviews} · Checking: ${command}`);
           try { checks.push(await runCheck(command, scope.cwd, { signal: abort.signal })); }
           catch (error) {
-            if (error.cleanupUnconfirmed) { active.pendingInterruptID = 'check-process'; run.state.pendingProcessPID = error.pid; }
+            if (error.cleanupUnconfirmed) run.state.pendingProcessPID = error.pid;
             checks.push({ command, exitCode: error.exitCode ?? null, exitSignal: error.exitSignal ?? null, durationMs: error.durationMs ?? null, error: error.message });
             throw error;
           }
@@ -164,12 +164,13 @@ export class Engine {
       active.finished = true;
       try {
         await active.lease.save(run.state);
-        if (!active.pendingInterruptID) await active.lease.release();
+        if (run.state.pendingProcessPID) await active.lease.orphan(run.state.pendingProcessPID);
+        else if (!active.pendingInterruptID) await active.lease.release();
       } catch (error) {
         active.persistenceError = error.message;
       }
       if (!active.pendingInterruptID) this.active.delete(run.state.id);
-      try { if (!this.report) await this.ctx.session.synthetic({ sessionID: active.fixerID, text: this.describe(active), resume: false }); }
+      try { await this.ctx.session.synthetic({ sessionID: active.fixerID, text: this.describe(active), resume: false }); }
       catch (error) { console.error(`[review-loop] Unable to report run ${run.state.id}: ${error.message}`); }
     }
   }
@@ -234,9 +235,11 @@ export class Engine {
       const previous = active.run.state.issues.some((old) => old.id === issue.id && old.file === issue.file);
       if (active.changedFiles.has(issue.file) || previous) continue;
       if (!issue.introduced_by || !active.changedFiles.has(issue.introduced_by.file)) throw new Error('An unchanged-file finding needs introduced_by evidence anchored in the current diff.');
-      await active.scope.source({ operation: 'read', path: issue.file, offset: issue.line, limit: 1 });
+      for (const [path, line] of [[issue.file, issue.line], [issue.introduced_by.file, issue.introduced_by.line]]) {
+        if ((await active.scope.source({ operation: 'read', path, offset: line, limit: 1 })).startsWith('[No matching')) throw new Error(`Evidence line ${path}:${line} does not exist.`);
+      }
     }
-    active.run.submitReview(input);
+    active.run.submitReview(input, { validated: true });
     await active.lease.save(active.run.state);
   }
 
@@ -259,9 +262,6 @@ export class Engine {
     if (!active) return;
     active.run.stop(reason);
     active.abort.abort();
-    if (active.run.state.pendingProcessPID) {
-      throw new Error('Check-process cleanup remains unconfirmed. Stored process IDs are never signalled again because they may have been reused. Investigate and recover explicitly after the old runtime stops.');
-    }
     const target = active.pendingInterruptID ?? active.turnSessionID;
     if (target) await this.interrupt(active, target);
     if (active.finished && !active.pendingInterruptID) {

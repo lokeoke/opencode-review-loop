@@ -2,12 +2,18 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 import { basename, dirname, join, relative } from 'node:path';
 
-const CONTROL_NAMES = new Set(['package.json', '.npmrc', 'Makefile', 'makefile', 'pyproject.toml', 'setup.cfg', 'tox.ini', 'pytest.ini']);
+const CONTROL_NAMES = new Set([
+  'package.json', '.npmrc', 'Makefile', 'makefile', 'GNUmakefile', 'pyproject.toml', 'setup.cfg', 'setup.py', 'tox.ini', 'pytest.ini', 'conftest.py', 'noxfile.py',
+  'jest.config.js', 'jest.config.cjs', 'jest.config.mjs', 'jest.config.ts', 'vitest.config.js', 'vitest.config.mjs', 'vitest.config.ts',
+  'eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', '.eslintrc', '.eslintrc.json', '.eslintrc.js', '.eslintrc.cjs',
+  'tsconfig.json', 'babel.config.js', '.babelrc', 'playwright.config.js', 'playwright.config.ts', 'pom.xml', 'build.gradle', 'go.mod',
+]);
 const CONTROL_NAMES_LOWERCASE = new Set([...CONTROL_NAMES].map((name) => name.toLowerCase()));
 const MAX_CONTROL_BYTES = 1024 * 1024;
 export const isCheckControlPath = (file) => CONTROL_NAMES_LOWERCASE.has(basename(file).toLowerCase());
 
-// Freeze known local launch definitions, not arbitrary transitive code executed by checks.
+// Protect these names repo-wide from automatic edits; fingerprint them from the check directory to the worktree root.
+// This freezes known launch definitions, not arbitrary transitive code executed by checks.
 export async function checkPolicyFingerprint(scope) {
   const hash = createHash('sha256');
   for (let directory = scope.cwd; ; directory = dirname(directory)) {
