@@ -30,6 +30,8 @@ From your existing **Build** session:
 
 **No goal required.** Bare `start` previews uncommitted changes against a pinned HEAD, including staged and non-ignored new files. It proposes existing npm test/lint scripts and asks you to approve the scope and checks. No commands or models run during the preview. Approval is one-use, session-bound, expires after ten minutes, and is invalidated by source/index changes. If no scripts are found, supply a check explicitly.
 
+Approval shows the selected script bodies and their pre/post hooks, not just command names. Known launch-control files in the check directory and its ancestors are fingerprinted; changes stop execution before the next check and require a fresh approval. Automatic edits cannot change these control files. Confirmation revalidates integrity without re-running script discovery. The native server slash fallback also prints the exact one-use approval command.
+
 Explicit checks authorize execution without the discovery confirmation dialog:
 
 ```text
@@ -42,6 +44,8 @@ Explicit checks authorize execution without the discovery confirmation dialog:
 ## Transparency
 
 The TUI/Desktop parts render command results in native dialogs, and progress transitions as native toasts. RPC returns results directly without starting a model turn just to show text. Progress includes scope/base/files, reviewer model/session, check execution, review/fix phases, findings and terminal reasons. Status includes durable progress history and check results. Passive synthetic session messages are only a transcript fallback—not the primary UI.
+
+Progress retains at most 64 events, with bounded message text and a dropped-event count; full findings/check results remain in their structured state fields. Final feedback uses one delivery channel: RPC notifications when available, otherwise the non-resuming transcript fallback. State is still persisted per event for crash visibility.
 
 Use the owning fixer session for control. Ordinary new user prompts cancel automation; status/stop client commands go through RPC, not `session.prompt`, and do not trigger prompt cancellation.
 
@@ -62,6 +66,7 @@ Custom clients can call authenticated `POST /api/rpc/review-loop/command` with `
 - **Read-only reviewer:** deny-by-default permissions; only bounded source inspection and structured submission. No shell, edits, MCP tools or delegation. Permission compatibility is checked before starting; only explicit permission allow is accepted.
 - **Controlled fixes:** the existing fixer verifies blocker/major findings, adds relevant tests and reports disputes for human takeover. Minor observations do not prolong the loop. Automatic fix turns cannot execute shell/delegate; the controller owns checks.
 - **Verified completion:** structured submission is provisional until the turn succeeds. Every previous blocker needs explicit resolution evidence; omission never proves a fix. Previously flagged files remain valid finding locations after reverts.
+- **Causal scope:** regressions may be located in unchanged repository source when `introduced_by: {file, line, explanation}` explicitly anchors the cause in the current diff. Unrelated pre-existing findings are rejected; prior tracked findings remain re-reviewable.
 - **Fail closed:** missing/incomplete output, unknown/infrastructure/authorization errors, failed checks, cancellation and exhausted limits cannot pass. Typed validation/input errors may recover only after successful same-tool execution and successful final completion.
 - **No progress:** repeated code fingerprints or the same blocking IDs twice stop for human takeover.
 - **Git ownership:** never stage, commit, push, merge, stash, reset or clean reviewed projects. Pin HEAD, branch/detached state and initial index; detect changes and stop.
@@ -74,6 +79,8 @@ PASS means no unresolved blocker/major findings after successful review and appr
 Use a dedicated worktree when other editors/sessions are active. The controller detects unexpected changes during checking/review, but cannot distinguish a human edit from a fixer edit during the fix phase. Do not mix unrelated work. Monorepo checks use the invoking package directory, while review/exclusivity cover the containing worktree.
 
 Automatic edits reject every symlink component, including dangling aliases and ancestors of new paths. Protected paths include `.git`, `.env*`, agent/runtime instruction/configuration paths, ignored files and `node_modules`. Fixes needing those paths require human takeover. Read/search tools skip symlinks; direct symlink reads are rejected.
+
+Known check controls (`package.json`, `.npmrc`, Makefiles and common Python launch configuration) are also protected. This pins launch definitions, not every transitive implementation read by an arbitrary shell command. Source/tests are intentionally editable; explicit commands and trusted repository code retain host authority. Source inspection rechecks ancestor components for each file rather than caching stale symlink-safety decisions across opens.
 
 This is **not an OS sandbox**. Approved checks and evolving repository scripts execute with your host authority and may have side effects. Existing trusted plugins remain privileged. Concurrent hostile filesystem replacement is not eliminated by path checks. Only run checks in trusted repositories.
 
@@ -92,6 +99,8 @@ node scripts/recover.mjs /path/to/project RUN_ID --confirm-processes-stopped
 ```
 
 Recovery serializes competing requests, validates run/nonce/host identity, refuses a live or unknown owner, archives the exact stale claim and marks its state stopped. The flag is your assertion about surviving children: a dead parent PID alone cannot prove their absence. PID reuse may conservatively block recovery. Never remove a live claim to force another run.
+
+After unconfirmed check-process cleanup, stop does **not** retry signalling a recorded process-group number: it may have been reused. The claim remains held for explicit investigation/recovery. Session interruption can still be retried through OpenCode's session API; numeric process IDs are not treated as durable process identities.
 
 ## Development
 

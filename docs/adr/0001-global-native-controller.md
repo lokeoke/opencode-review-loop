@@ -10,4 +10,6 @@ Passive synthetic messages proved insufficient for visible feedback. Client part
 
 Bare start discovers existing npm test/lint scripts without executing them, previews the scope, and requests explicit approval. Approval is session-bound, one-use and expiring; a changed source/index fingerprint invalidates it. Explicit check arguments are direct authorization. Repositories without discoverable scripts require an explicit command rather than guessed execution.
 
+The preview includes script bodies/pre/post hooks. Confirmation only revalidates scope and pinned control-file bytes, not discovery. Server slash responses preserve the approval token for clients using that path. RPC progress is a bounded diagnostic history, not an unbounded event stream or a second copy of full findings.
+
 Global installation needs no per-project files. Client-version compatibility and actual visual rendering remain separate integration gates; adapter tests alone do not prove every client displays the UI correctly.
