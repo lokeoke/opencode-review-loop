@@ -211,6 +211,7 @@ export class GitScope {
         const stat = await lstat(join(this.root, file));
         if (stat.isSymbolicLink()) throw new Error(`Changed symlink is unsupported: ${file}`);
         if (!stat.isFile()) throw new Error(`Changed non-file/submodule is unsupported: ${file}`);
+        if (added.includes(file) && stat.size > MAX_SOURCE_FILE_BYTES) throw new Error(`New file is larger than ${MAX_SOURCE_FILE_BYTES / 1024} KiB and cannot be reviewed: ${file}. Commit it separately, ignore it, or split it.`);
         const canonical = await realpath(join(this.root, file));
         if (relative(this.root, canonical).startsWith(`..${sep}`)) throw new Error('Changed path escapes the worktree.');
       } catch (error) { if (error.code !== 'ENOENT') throw error; }

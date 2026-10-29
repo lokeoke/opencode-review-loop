@@ -1,4 +1,4 @@
-import { Engine } from './engine.mjs';
+import { ALREADY_RUNNING, Engine } from './engine.mjs';
 import { parseCommand } from './options.mjs';
 import { FIX_SCHEMA, REVIEW_SCHEMA } from './contracts.mjs';
 import { installGuards } from './security.mjs';
@@ -62,7 +62,7 @@ export function createPlugin(dependencies = {}) {
           };
           if (options.action === 'start') {
             if (compatibilityError) throw compatibilityError;
-            if (!options.confirm && engine.activeFor(sessionID)) throw new Error('A review loop is already running in this session. Use /review-loop status to follow it or /review-loop stop to cancel it.');
+            if (!options.confirm && engine.activeFor(sessionID)) throw new Error(ALREADY_RUNNING);
             if (!options.confirm) options = await withPullRequest(options);
             if (options.confirm) {
               const approval = approvals.get(sessionID);

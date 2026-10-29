@@ -130,3 +130,36 @@ test('a fork pull request with explicit checks still needs approval of exactly t
   f.set({ title: 'A different title' });
   assert.match((await f.run(other.confirmation)).text, /changed since approval/);
 });
+
+test('a bare start while a loop is running refuses immediately instead of showing an approval preview', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'opencode-review-loop-running-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+  git('init', '-b', 'main');
+  await writeFile(join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node test.mjs' } }));
+  await writeFile(join(root, 'app.js'), 'before');
+  git('add', '.'); git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'Initial');
+  await writeFile(join(root, 'app.js'), 'after');
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const fixer = { id: 'fixer', agent: 'build', model: { providerID: 'github-copilot', id: 'gpt-6.1-sol' }, location: { directory: root }, outcome: 'succeeded' };
+  let command;
+  const { default: plugin } = await import('../src/index.mjs');
+  const { ALREADY_RUNNING } = await import('../src/engine.mjs');
+  const cleanup = await plugin.setup({
+    model: { list: async () => ({ location: { directory: root }, data: [{ id: 'claude-sonnet-5.5', providerID: 'github-copilot', enabled: true, capabilities: { tools: true } }] }) },
+    session: { hook: async () => {}, get: async () => fixer, wait: async () => blocked, interrupt: async () => ({ interrupted: true }), synthetic: async () => {}, context: async () => [], create: async () => assert.fail('no reviewer should start'), prompt: async () => assert.fail('no prompt should run') },
+    permission: { hook: async () => {}, assert: async () => {} },
+    tool: { transform: async (register) => register({ add: () => {} }) },
+    command: { transform: async () => assert.fail('no server slash command') },
+    rpc: { register: async (_contract, handlers) => { command = handlers.command; return { events: { emit: async () => {} } }; } },
+  });
+  t.after(cleanup);
+  assert.match((await command({ sessionID: 'fixer', text: 'start --check "exit 0"' })).text, /Review loop started/);
+  const second = await command({ sessionID: 'fixer', text: '' });
+  assert.ok(second.text.includes(ALREADY_RUNNING));
+  assert.equal(second.confirmation, undefined, 'no approval dialog is offered for a start that cannot run');
+  await command({ sessionID: 'fixer', text: 'stop' });
+  release();
+  for (let i = 0; i < 100 && !/"phase": "stopped"/.test((await command({ sessionID: 'fixer', text: 'status' })).text); i++) await new Promise((resolve) => setImmediate(resolve));
+});

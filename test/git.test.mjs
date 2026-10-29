@@ -211,3 +211,28 @@ test('a cached diff is dropped by invalidate so edits made after a read are visi
   scope.invalidate();
   assert.match((await scope.fileDiff({ path: 'seed.txt' })).text, /\+second/);
 });
+
+test('an untracked file above the per-file size limit is rejected up front with a clear message', async (t) => {
+  const root = await oversizedFixture(t, 0);
+  await writeFile(join(root, 'huge.js'), 'x'.repeat(512 * 1024 + 1));
+  await assert.rejects((await GitScope.open(root, 'HEAD')).snapshot(), /larger than 512 KiB.*huge\.js/s);
+});
+
+test('untracked files that became binary or oversized after the snapshot are not served by the diff reader', async (t) => {
+  const root = await oversizedFixture(t, 0);
+  await writeFile(join(root, 'late.js'), 'ok\n');
+  const scope = await GitScope.open(root, 'HEAD');
+  await scope.snapshot();
+  await writeFile(join(root, 'late.js'), 'a\0b');
+  await assert.rejects(scope.fileDiff({ path: 'late.js' }), /Binary/);
+  await writeFile(join(root, 'late.js'), 'x'.repeat(512 * 1024 + 1));
+  await assert.rejects(scope.fileDiff({ path: 'late.js' }), /size limit/);
+});
+
+test('past the review size limit the snapshot stays oversized without embedding new-file content', async (t) => {
+  const root = await oversizedFixture(t, 0);
+  for (let i = 0; i < 3; i++) await writeFile(join(root, `n${i}.js`), `${'y'.repeat(100)}\n`.repeat(1000));
+  const snapshot = await (await GitScope.open(root, 'HEAD')).snapshot();
+  assert.equal(snapshot.oversized, true);
+  assert.equal(snapshot.diff, undefined);
+});

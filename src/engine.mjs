@@ -14,6 +14,7 @@ import { scopeKind } from './scope.mjs';
 export const PHASE_TIMEOUT_MS = 10 * 60_000;
 export const RUN_TIMEOUT_MS = 45 * 60_000;
 const CONTROL_TIMEOUT_MS = 15_000;
+export const ALREADY_RUNNING = 'A review loop is already running in this session. Use /review-loop status to follow it or /review-loop stop to cancel it.';
 export const MAX_PROGRESS_EVENTS = 64;
 const MAX_PROGRESS_TEXT = 8192;
 const MAX_DENIALS = 32;
@@ -64,7 +65,7 @@ export class Engine {
 
   async start(sessionID, options) {
     if (this.disposed) throw new Error('Review-loop plugin is unloading.');
-    if (this.activeFor(sessionID)) throw new Error('A review loop is already running in this session. Use /review-loop status to follow it or /review-loop stop to cancel it.');
+    if (this.activeFor(sessionID)) throw new Error(ALREADY_RUNNING);
     const fixer = await this.ctx.session.get({ sessionID });
     if (fixer.agent !== 'build') throw new Error('Switch to the Build agent before starting a review loop.');
     if (!fixer.model) throw new Error('The fixer session must have an explicit selected model.');
@@ -297,7 +298,7 @@ export class Engine {
     const target = active.pendingInterruptID ?? active.turnSessionID;
     if (target) await this.interrupt(active, target);
     if (active.finished && !active.pendingInterruptID) {
-      await active.lease.save(active.run.state);
+      try { await active.lease.save(active.run.state); } catch { /* execute() already persisted the terminal state and released the lease */ }
       await active.lease.release();
       this.active.delete(active.run.state.id);
     }
