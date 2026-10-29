@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { test } from 'node:test';
+import { randomBytes } from 'node:crypto';
 import { GitScope } from '../src/git.mjs';
 
 test('a pinned scope includes staged, unstaged, and new files without modifying the index', async (t) => {
@@ -33,6 +34,8 @@ test('a pinned scope includes staged, unstaged, and new files without modifying 
   assert.equal(await scope.canEdit('AGENTS.md'), false);
   assert.equal(await scope.canEdit('.opencode/plugins/escape.js'), false);
   assert.equal(await scope.canEdit('.git/config'), false);
+  assert.equal(await scope.canEdit('package.json'), false);
+  assert.equal(await scope.canEdit('PACKAGE.JSON'), false);
   await symlink('.git/config', join(root, 'alias'));
   await symlink('/nonexistent-outside/file', join(root, 'dangling'));
   assert.equal(await scope.canEdit('alias'), false);
@@ -75,4 +78,17 @@ test('unchanged tracked assets above 64 MiB do not consume the untracked fingerp
   await writeFile(join(root, 'app.js'), 'after');
   const scope = await GitScope.open(root, 'HEAD');
   assert.deepEqual((await scope.snapshot()).files, ['app.js']);
+});
+
+test('large changed binary assets stop with a useful reason before encoded diff buffering', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'opencode-review-loop-binary-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+  git('init', '-b', 'main');
+  await writeFile(join(root, 'asset.bin'), Buffer.from([0, 1]));
+  git('add', '.');
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'Initial');
+  await writeFile(join(root, 'asset.bin'), randomBytes(7 * 1024 * 1024));
+  const scope = await GitScope.open(root, 'HEAD');
+  await assert.rejects(scope.snapshot(), /Binary changes need manual review/);
 });

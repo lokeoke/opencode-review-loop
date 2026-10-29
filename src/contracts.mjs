@@ -24,6 +24,12 @@ export function validateReview(value) {
     if (issue.file.startsWith('/') || issue.file.includes('\\') || issue.file.split('/').some((part) => part === '..' || part === '.git' || part === '')) throw new Error('Finding path must be worktree-relative.');
     if (!Number.isSafeInteger(issue.line) || issue.line < 1) throw new Error('Invalid line.');
     for (const key of ['problem', 'failure_scenario', 'suggested_fix']) text(issue[key], key);
+    if (issue.introduced_by !== undefined) {
+      text(issue.introduced_by.file, 'introduced_by file');
+      if (issue.introduced_by.file.startsWith('/') || issue.introduced_by.file.includes('\\') || issue.introduced_by.file.split('/').includes('..')) throw new Error('Introduced-by path must be worktree-relative.');
+      if (!Number.isSafeInteger(issue.introduced_by.line) || issue.introduced_by.line < 1) throw new Error('Invalid introduced-by line.');
+      text(issue.introduced_by.explanation, 'causal explanation');
+    }
   }
   const resolved = new Set();
   for (const resolution of value.resolutions) {
@@ -48,11 +54,13 @@ function object(properties) {
   return { type: 'object', properties, required: Object.keys(properties), additionalProperties: false };
 }
 const array = (items) => ({ type: 'array', items, maxItems: MAX_FINDINGS });
+const finding = object({ id, severity: { enum: SEVERITIES }, file: string, line: { type: 'integer', minimum: 1 }, problem: string, failure_scenario: string, suggested_fix: string });
+finding.properties.introduced_by = object({ file: string, line: { type: 'integer', minimum: 1 }, explanation: string });
 export const REVIEW_SCHEMA = object({
   runId: id,
   round: { type: 'integer', minimum: 1 },
   complete: { type: 'boolean' },
-  issues: array(object({ id, severity: { enum: SEVERITIES }, file: string, line: { type: 'integer', minimum: 1 }, problem: string, failure_scenario: string, suggested_fix: string })),
+  issues: array(finding),
   resolutions: array(object({ id, status: { enum: ['fixed', 'open', 'disputed'] }, evidence: string })),
 });
 export const FIX_SCHEMA = object({ runId: id, round: { type: 'integer', minimum: 1 }, summary: string, disputed: array(id) });

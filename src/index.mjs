@@ -4,7 +4,8 @@ import { FIX_SCHEMA, REVIEW_SCHEMA } from './contracts.mjs';
 import { installGuards } from './security.mjs';
 import { permissionGate } from './compatibility.mjs';
 import { ReviewLoop } from './rpc.mjs';
-import { prepare } from './preflight.mjs';
+import { inspectScope, prepare } from './preflight.mjs';
+import { checkPolicyFingerprint } from './check-policy.mjs';
 import { randomUUID } from 'node:crypto';
 
 const SOURCE_SCHEMA = {
@@ -55,16 +56,17 @@ export default {
             approvals.delete(sessionID);
             if (!approval || approval.token !== options.confirm || Date.now() > approval.expires) throw new Error('Approval expired or does not belong to this session. Run start again.');
             const session = await ctx.session.get({ sessionID });
-            const current = await prepare(session.location.directory, approval.options);
-            if (current.scope.root !== approval.root || current.snapshot.fingerprint !== approval.fingerprint || current.snapshot.index !== approval.index) throw new Error('Scope changed since approval. Run start again.');
+            const current = await inspectScope(session.location.directory, approval.options);
+            if (current.scope.root !== approval.root || current.scope.cwd !== approval.directory || current.snapshot.fingerprint !== approval.fingerprint || current.snapshot.index !== approval.index) throw new Error('Scope changed since approval. Run start again.');
+            if (await checkPolicyFingerprint(current.scope) !== approval.options.checkPolicy) throw new Error('Check definitions changed since approval. Run start again.');
             options = approval.options;
           } else if (!options.checks.length) {
             const session = await ctx.session.get({ sessionID });
             const proposed = await prepare(session.location.directory, options);
-            const text = `Scope: ${proposed.scope.root}\nBase: ${proposed.scope.baseSha}\nFiles:\n${proposed.snapshot.files.slice(0, 40).join('\n')}\n\nProposed checks: ${proposed.checks.join('; ') || 'none found'}\nNo commands or models have run. Approve only if all these changes belong to your task.`;
+            const text = `Scope: ${proposed.scope.root}\nBase: ${proposed.scope.baseSha}\nFiles (${proposed.snapshot.files.length} total; first 40 shown):\n${proposed.snapshot.files.slice(0, 40).join('\n')}\n\nProposed checks: ${proposed.checks.join('; ') || 'none found'}\nScript definitions (including pre/post hooks):\n${proposed.definitions.join('\n')}\nNo commands or models have run. Approve only if all these changes belong to your task.`;
             if (!proposed.checks.length) return { text: text + '\nSupply an explicit --check command to continue.' };
             const token = randomUUID();
-            approvals.set(sessionID, { token, root: proposed.scope.root, fingerprint: proposed.snapshot.fingerprint, index: proposed.snapshot.index, expires: Date.now() + APPROVAL_TTL_MS, options: { ...options, base: proposed.scope.baseSha, checks: proposed.checks } });
+            approvals.set(sessionID, { token, root: proposed.scope.root, directory: proposed.scope.cwd, fingerprint: proposed.snapshot.fingerprint, index: proposed.snapshot.index, expires: Date.now() + APPROVAL_TTL_MS, options: { ...options, base: proposed.scope.baseSha, checks: proposed.checks, checkPolicy: proposed.checkPolicy } });
             return { text, confirmation: `start --confirm ${token}` };
           }
           const { id } = await engine.start(sessionID, options);
@@ -88,7 +90,8 @@ export default {
         name: 'review-loop',
         description: 'Start, inspect, or stop a controlled Copilot review loop',
         async execute({ sessionID, prompt }) {
-          const { text } = await command({ sessionID, text: prompt.text });
+          const result = await command({ sessionID, text: prompt.text });
+          const text = result.text + (result.confirmation ? `\nTo approve: /review-loop ${result.confirmation}` : '');
           await engine.report?.(sessionID, text);
           await ctx.session.synthetic({ sessionID, text, resume: false });
         },

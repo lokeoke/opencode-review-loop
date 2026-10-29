@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { lstat, readFile, readlink, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isCheckControlPath } from './check-policy.mjs';
 
 const exec = promisify(execFile);
 const MAX_GIT_OUTPUT = 8 * 1024 * 1024;
@@ -14,8 +15,13 @@ const MAX_SOURCE_RESPONSE_BYTES = 32 * 1024;
 export const sensitivePath = (file) => /(^|\/)(\.env($|\.)|\.git($|\/)|id_(rsa|ed25519)$)|\.(pem|key|p12|pfx)$/i.test(file);
 
 async function git(cwd, args) {
-  const { stdout } = await exec('git', ['-c', 'core.fsmonitor=false', ...args], { cwd, encoding: 'utf8', maxBuffer: MAX_GIT_OUTPUT, timeout: GIT_TIMEOUT_MS, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
-  return stdout;
+  try {
+    const { stdout } = await exec('git', ['-c', 'core.fsmonitor=false', ...args], { cwd, encoding: 'utf8', maxBuffer: MAX_GIT_OUTPUT, timeout: GIT_TIMEOUT_MS, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    return stdout;
+  } catch (error) {
+    if (error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw new Error('Git output exceeds the 8 MiB safety budget; split the change or review it manually.');
+    throw error;
+  }
 }
 const paths = (value) => value.split('\0').filter(Boolean);
 async function branchName(root) {
@@ -56,6 +62,7 @@ export class GitScope {
   async canEdit(path) {
     if (!await this.contains(path)) return false;
     const file = relative(this.root, resolve(this.cwd, path)).split(sep).join('/');
+    if (isCheckControlPath(file)) return false;
     if (/(^|\/)(AGENTS\.md|CLAUDE\.md|\.opencode|\.claude|\.cursor|\.agents|node_modules|\.gitignore|\.gitattributes)($|\/)/i.test(file)) return false;
     try { await git(this.root, ['check-ignore', '--quiet', '--', file]); return false; }
     catch (error) { if (error.code === 1) return true; throw error; }
@@ -109,6 +116,10 @@ export class GitScope {
     const added = paths(await git(this.root, ['ls-files', '--others', '--exclude-standard', '-z']));
     const changed = paths(await git(this.root, ['diff', '--name-only', '--no-renames', '-z', this.baseSha, '--']));
     const files = [...new Set([...changed, ...added])].sort();
+    for (const ref of new Set([this.baseSha, head])) {
+      const stats = paths(await git(this.root, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv', '--no-renames', ref, '--']));
+      if (stats.some((entry) => entry.startsWith('-\t-\t'))) throw new Error('Binary changes need manual review; no binary diff was buffered.');
+    }
     for (const file of files) {
       if (sensitivePath(file)) throw new Error(`Sensitive changed path cannot be reviewed: ${file}`);
       try {

@@ -6,10 +6,14 @@ import { RunStore } from './storage.mjs';
 import { selectReviewer } from './options.mjs';
 import { runCheck } from './checks.mjs';
 import { fixPrompt, reviewPrompt } from './prompts.mjs';
+import { checkPolicyFingerprint } from './check-policy.mjs';
+import { validateReview } from './contracts.mjs';
 
 export const PHASE_TIMEOUT_MS = 10 * 60_000;
 export const RUN_TIMEOUT_MS = 45 * 60_000;
 const CONTROL_TIMEOUT_MS = 15_000;
+export const MAX_PROGRESS_EVENTS = 64;
+const MAX_PROGRESS_TEXT = 8192;
 // Locations load separate plugin instances; session guards must follow a moved session.
 const ACTIVE_RUNS = Symbol.for('opencode-review-loop.active.v1');
 globalThis[ACTIVE_RUNS] ??= new Map();
@@ -29,8 +33,13 @@ export class Engine {
   }
 
   async progress(active, text) {
+    if (text.length > MAX_PROGRESS_TEXT) text = text.slice(0, MAX_PROGRESS_TEXT) + '\n[Truncated; use status for full findings.]';
     active.run.state.progress ??= [];
     active.run.state.progress.push({ time: new Date().toISOString(), text });
+    if (active.run.state.progress.length > MAX_PROGRESS_EVENTS) {
+      active.run.state.progress.shift();
+      active.run.state.progressDropped = (active.run.state.progressDropped ?? 0) + 1;
+    }
     await active.lease.save(active.run.state);
     try { await this.report?.(active.fixerID, text); }
     catch (error) { console.error(`[review-loop] Progress delivery failed: ${error.message}`); }
@@ -51,13 +60,14 @@ export class Engine {
     if (fixer.agent !== 'build') throw new Error('Switch to the Build agent before starting a review loop.');
     if (!fixer.model) throw new Error('The fixer session must have an explicit selected model.');
     const scope = await GitScope.open(fixer.location.directory, options.base);
+    const checkPolicy = options.checkPolicy ?? await checkPolicyFingerprint(scope);
     const models = await this.ctx.model.list();
     const reviewerModel = selectReviewer(models.data ?? models, fixer.model, options);
     const id = randomUUID();
     const lease = await this.store.acquire(scope.root, id);
     if (this.disposed) { await lease.release(); throw new Error('Review-loop plugin unloaded during startup.'); }
     const run = new Run({ id });
-    const active = { owner: this, run, scope, lease, fixerID: sessionID, fixerModel: fixer.model, fixerAgent: fixer.agent, reviewerModel, checks: options.checks, goal: options.goal, abort: new AbortController() };
+    const active = { owner: this, run, scope, lease, fixerID: sessionID, fixerModel: fixer.model, fixerAgent: fixer.agent, reviewerModel, checks: options.checks, checkPolicy, goal: options.goal, abort: new AbortController() };
     this.active.set(id, active);
     run.state.worktree = scope.root;
     run.state.directory = scope.cwd;
@@ -67,6 +77,7 @@ export class Engine {
     run.state.reviewerModel = reviewerModel;
     run.state.goal = options.goal;
     run.state.approvedChecks = options.checks;
+    run.state.checkPolicy = checkPolicy;
     run.state.checks = [];
     try { await lease.save(run.state); }
     catch (error) { this.active.delete(id); await lease.release(); throw error; }
@@ -83,6 +94,7 @@ export class Engine {
     }, RUN_TIMEOUT_MS);
     try {
       await this.ctx.session.wait({ sessionID: active.fixerID }, { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(PHASE_TIMEOUT_MS)]) });
+      this.ensureRunning(active);
       await this.assertSession(active, active.fixerID);
       active.initial = await scope.snapshot();
       run.state.files = active.initial.files;
@@ -97,7 +109,8 @@ export class Engine {
         run.state.checks.push({ fingerprint: before.fingerprint, results: checks });
         for (const command of active.checks) {
           this.ensureRunning(active);
-          await this.progress(active, `Round ${run.state.round + 1}/4 · Checking: ${command}`);
+          if (await checkPolicyFingerprint(scope) !== active.checkPolicy) throw new Error('Approved check definitions changed; restart and reapprove before execution.');
+          await this.progress(active, `Round ${run.state.round + 1}/${run.state.maxReviews} · Checking: ${command}`);
           try { checks.push(await runCheck(command, scope.cwd, { signal: abort.signal })); }
           catch (error) {
             if (error.cleanupUnconfirmed) { active.pendingInterruptID = 'check-process'; run.state.pendingProcessPID = error.pid; }
@@ -109,7 +122,7 @@ export class Engine {
         await this.assertSession(active, active.fixerID);
         if (checked.fingerprint !== before.fingerprint || checked.index !== before.index) throw new Error('Verification changed source or the Git index.');
         run.checked(checked.fingerprint);
-        active.reviewFiles = new Set([...checked.files, ...run.state.issues.map((issue) => issue.file)]);
+        active.changedFiles = new Set(checked.files);
         if (run.terminal) break;
         await active.lease.save(run.state);
         if (!active.reviewerID) {
@@ -129,7 +142,7 @@ export class Engine {
           run.state.reviewerID = reviewer.id;
           await active.lease.save(run.state);
         }
-        await this.progress(active, `Round ${run.state.round}/4 · Reviewing · session ${active.reviewerID}`);
+        await this.progress(active, `Round ${run.state.round}/${run.state.maxReviews} · Reviewing · session ${active.reviewerID}`);
         await this.turn(active, active.reviewerID, reviewPrompt(active, checked), 'reviewer');
         const reviewed = await scope.snapshot();
         await this.assertSession(active, active.fixerID);
@@ -137,7 +150,7 @@ export class Engine {
         run.reviewCompleted(reviewed.fingerprint);
         await active.lease.save(run.state);
         if (run.state.phase === 'fixing') {
-          await this.progress(active, `Round ${run.state.round}/4 · Fixing · findings: ${JSON.stringify(run.state.issues)}`);
+          await this.progress(active, `Round ${run.state.round}/${run.state.maxReviews} · Fixing · findings: ${JSON.stringify(run.state.issues)}`);
           await this.turn(active, active.fixerID, fixPrompt(active), 'fixer');
           run.fixCompleted();
           await active.lease.save(run.state);
@@ -156,7 +169,7 @@ export class Engine {
         active.persistenceError = error.message;
       }
       if (!active.pendingInterruptID) this.active.delete(run.state.id);
-      try { await this.ctx.session.synthetic({ sessionID: active.fixerID, text: this.describe(active), resume: false }); }
+      try { if (!this.report) await this.ctx.session.synthetic({ sessionID: active.fixerID, text: this.describe(active), resume: false }); }
       catch (error) { console.error(`[review-loop] Unable to report run ${run.state.id}: ${error.message}`); }
     }
   }
@@ -216,7 +229,13 @@ export class Engine {
   async submitReview(sessionID, input) {
     const active = this.submission(sessionID, input, 'reviewer');
     await this.assertSession(active, sessionID);
-    if (!Array.isArray(input.issues) || input.issues.some((issue) => !active.reviewFiles.has(issue.file))) throw new Error('Findings must point to a current or previously flagged file in this review scope.');
+    validateReview(input);
+    for (const issue of input.issues) {
+      const previous = active.run.state.issues.some((old) => old.id === issue.id && old.file === issue.file);
+      if (active.changedFiles.has(issue.file) || previous) continue;
+      if (!issue.introduced_by || !active.changedFiles.has(issue.introduced_by.file)) throw new Error('An unchanged-file finding needs introduced_by evidence anchored in the current diff.');
+      await active.scope.source({ operation: 'read', path: issue.file, offset: issue.line, limit: 1 });
+    }
     active.run.submitReview(input);
     await active.lease.save(active.run.state);
   }
@@ -241,10 +260,7 @@ export class Engine {
     active.run.stop(reason);
     active.abort.abort();
     if (active.run.state.pendingProcessPID) {
-      try { process.kill(-active.run.state.pendingProcessPID, 'SIGKILL'); }
-      catch (error) { if (error.code !== 'ESRCH') throw new Error('Check-process cleanup remains unconfirmed.'); }
-      active.run.state.pendingProcessPID = undefined;
-      active.pendingInterruptID = undefined;
+      throw new Error('Check-process cleanup remains unconfirmed. Stored process IDs are never signalled again because they may have been reused. Investigate and recover explicitly after the old runtime stops.');
     }
     const target = active.pendingInterruptID ?? active.turnSessionID;
     if (target) await this.interrupt(active, target);

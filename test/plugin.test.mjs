@@ -28,21 +28,25 @@ test('bare start previews scope and existing checks; changed scope invalidates a
   await writeFile(join(root, 'app.js'), 'before');
   git('add', '.'); git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'Initial');
   await writeFile(join(root, 'app.js'), 'after');
-  let command;
+  let command, slash;
+  const notices = [];
   const { default: plugin } = await import('../src/index.mjs');
   const cleanup = await plugin.setup({
-    session: { hook: async () => {}, get: async () => ({ location: { directory: root } }) },
+    session: { hook: async () => {}, get: async () => ({ location: { directory: root } }), synthetic: async ({ text }) => notices.push(text) },
     permission: { hook: async () => {}, assert: async () => assert.fail('No permission request needed for preview') },
     tool: { transform: async (register) => register({ add: () => {} }) },
-    command: { transform: async (register) => register({ add: () => {} }) },
+    command: { transform: async (register) => register({ add: (value) => { slash = value; } }) },
     rpc: { register: async (_contract, handlers) => { command = handlers.command; return { events: { emit: async () => {} } }; } },
   });
   t.after(cleanup);
   const preview = await command({ sessionID: 'fixer', text: 'start' });
   assert.match(preview.text, /app.js/);
   assert.match(preview.text, /npm test; npm run lint/);
+  assert.match(preview.text, /node test.mjs/);
   assert.match(preview.confirmation, /^start --confirm /);
-  await writeFile(join(root, 'app.js'), 'changed again');
+  await slash.execute({ sessionID: 'fallback', prompt: { text: 'start' } });
+  assert.match(notices.at(-1), /\/review-loop start --confirm [a-z0-9-]+/);
+  await writeFile(join(root, 'package.json'), 'malformed now');
   const expired = await command({ sessionID: 'fixer', text: preview.confirmation });
   assert.match(expired.text, /Scope changed/);
 });
