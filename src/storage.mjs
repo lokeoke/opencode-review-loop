@@ -35,6 +35,7 @@ export class RunStore {
       } finally { await rm(temporary, { force: true }); }
     };
     return {
+      isReleased: () => released,
       save: (state) => {
         if (released) throw new Error('Run lease has been released.');
         const content = JSON.stringify({ version: 1, ...state, updatedAt: new Date().toISOString() }, null, 2);

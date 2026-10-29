@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { lstat, readFile, readlink, realpath } from 'node:fs/promises';
+import { lstat, open, readFile, readlink, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isCheckControlPath } from './check-policy.mjs';
 
@@ -12,6 +12,9 @@ const MAX_SOURCE_BYTES = 64 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 15_000;
 const MAX_SOURCE_FILE_BYTES = 512 * 1024;
 const MAX_SOURCE_RESPONSE_BYTES = 32 * 1024;
+const MAX_REVIEW_FILES = 300;
+const MAX_DIFF_LINE_CHARS = 4000;
+export const END_OF_DIFF = '(end of diff)';
 export const sensitivePath = (file) => /(^|\/)(\.env($|\.)|\.git($|\/)|id_(rsa|ed25519)$)|\.(pem|key|p12|pfx)$/i.test(file);
 
 async function git(cwd, args) {
@@ -29,6 +32,32 @@ async function branchName(root) {
   catch (error) { if (error.code === 1) return null; throw error; }
 }
 
+// Long lines are delivered in full as consecutive chunks, so reaching the end always means everything was returned.
+function splitDiffLines(text) {
+  return text.split('\n').flatMap((line) => {
+    const chunks = [];
+    for (let start = 0; start < line.length;) {
+      let end = Math.min(start + MAX_DIFF_LINE_CHARS, line.length);
+      const last = line.charCodeAt(end - 1);
+      if (end < line.length && last >= 0xd800 && last <= 0xdbff) end -= 1; // never split a surrogate pair
+      chunks.push(line.slice(start, end));
+      start = end;
+    }
+    return chunks.length ? chunks : [''];
+  });
+}
+
+// Reads at most MAX_SOURCE_FILE_BYTES even if the file grew after its size was checked.
+async function readNewFile(path) {
+  const handle = await open(path, 'r');
+  try {
+    const buffer = Buffer.alloc(MAX_SOURCE_FILE_BYTES + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > MAX_SOURCE_FILE_BYTES) throw new Error(`New file is larger than ${MAX_SOURCE_FILE_BYTES / 1024} KiB and cannot be reviewed.`);
+    return buffer.toString('utf8', 0, bytesRead);
+  } finally { await handle.close(); }
+}
+
 export class GitScope {
   static async open(directory, base) {
     if (!base || base.startsWith('-')) throw new Error('Invalid base ref.');
@@ -42,7 +71,10 @@ export class GitScope {
     return new GitScope({ root, cwd, sessionDirectory: resolve(directory), baseSha, head, branch });
   }
 
-  constructor(info) { Object.assign(this, info); }
+  constructor(info) { Object.assign(this, info); this.diffCache = new Map(); }
+
+  // Drop cached diffs and path lists; call whenever the working tree may have changed (a snapshot, or any model turn).
+  invalidate() { this.diffCache.clear(); this.pathsCache = undefined; }
 
   // Resource paths are relative to the session directory as OpenCode reports it. Resolve them lexically there,
   // then map anything under that directory onto its canonical form. Deliberately no realpath on the result:
@@ -68,6 +100,13 @@ export class GitScope {
       }
     }
     return true;
+  }
+
+  // Paths whose working-tree state differs from the pinned HEAD: tracked edits plus untracked, non-ignored files.
+  async uncommitted() {
+    const tracked = paths(await git(this.root, ['diff', '--name-only', '-z', '--no-renames', 'HEAD', '--']));
+    const added = paths(await git(this.root, ['ls-files', '--others', '--exclude-standard', '-z']));
+    return [...new Set([...tracked, ...added])].sort();
   }
 
   // Returns why an automatic edit of this path is refused, or undefined when allowed. Never throws:
@@ -125,15 +164,57 @@ export class GitScope {
     return output.join('\n') || '[No matching source lines.]';
   }
 
-  async snapshot() {
-    const head = (await git(this.root, ['rev-parse', 'HEAD'])).trim();
-    const branch = await branchName(this.root);
-    if (head !== this.head || branch !== this.branch) throw new Error('Branch or HEAD changed; start a new run.');
-    const added = paths(await git(this.root, ['ls-files', '--others', '--exclude-standard', '-z']));
+  // Changed paths in the review scope, and the subset that is untracked (so absent from `git diff`).
+  async changedPaths() {
+    const added = paths(await git(this.root, ['ls-files', '--others', '--exclude-standard', '-z'])).sort();
     const changed = paths(await git(this.root, ['diff', '--name-only', '--no-renames', '-z', this.baseSha, '--']));
-    const files = [...new Set([...changed, ...added])].sort();
+    return { added, files: [...new Set([...changed, ...added])].sort() };
+  }
+
+  // One changed file's diff, paged by diff line, for changes too large to embed. `complete` means the end was returned.
+  async fileDiff({ path, offset = 1, limit = 150 }) {
+    if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error('Invalid diff pagination.');
+    const { added, files } = this.pathsCache ??= await this.changedPaths();
+    if (typeof path !== 'string' || !files.includes(path)) throw new Error('Path is not a changed file in this review.');
+    let lines = this.diffCache.get(path);
+    if (!lines) {
+      let text;
+      if (added.includes(path)) {
+        if (!await this.contains(join(this.root, path))) throw new Error('Path is not a changed file in this review.');
+        const stat = await lstat(join(this.root, path));
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SOURCE_FILE_BYTES) throw new Error('New file cannot be read: it is not a regular file or exceeds the per-file size limit.');
+        const content = await readNewFile(join(this.root, path));
+        if (content.includes('\0')) throw new Error('Binary new files need manual review.');
+        text = `New file ${JSON.stringify(path)}:\n${content}`;
+      } else text = await git(this.root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', this.baseSha, '--', path]);
+      lines = splitDiffLines(text);
+      this.diffCache.set(path, lines);
+    }
+    if (offset > lines.length) throw new Error(`Offset ${offset} is beyond the end of this diff (${lines.length} lines).`);
+    const page = [];
+    let bytes = 0, index = offset - 1;
+    for (; index < lines.length && page.length < limit; index++) {
+      const line = lines[index];
+      bytes += Buffer.byteLength(line);
+      if (page.length && bytes > MAX_SOURCE_RESPONSE_BYTES) break;
+      page.push(line);
+    }
+    const complete = index >= lines.length;
+    return { complete, next: index + 1, text: page.join('\n') + (complete ? `\n${END_OF_DIFF}` : `\n[More diff available; continue at offset ${index + 1}.]`) };
+  }
+
+  async snapshot() {
+    const [headOut, branch] = await Promise.all([git(this.root, ['rev-parse', 'HEAD']), branchName(this.root)]);
+    const head = headOut.trim();
+    if (head !== this.head || branch !== this.branch) throw new Error('Branch or HEAD changed; start a new run.');
+    this.invalidate();
+    const [{ added, files }, numstat] = await Promise.all([
+      this.changedPaths(),
+      git(this.root, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv', '--no-renames', 'HEAD', '--']),
+    ]);
+    if (files.length > MAX_REVIEW_FILES) throw new Error(`The change touches more than ${MAX_REVIEW_FILES} files; split it into smaller reviews.`);
     // The encoded --binary fingerprint below is against HEAD; reject binary changes before buffering it.
-    const stats = paths(await git(this.root, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv', '--no-renames', 'HEAD', '--']));
+    const stats = paths(numstat);
     if (stats.some((entry) => entry.startsWith('-\t-\t'))) throw new Error('Binary changes need manual review; no binary diff was buffered.');
     for (const file of files) {
       if (sensitivePath(file)) throw new Error(`Sensitive changed path cannot be reviewed: ${file}`);
@@ -141,14 +222,20 @@ export class GitScope {
         const stat = await lstat(join(this.root, file));
         if (stat.isSymbolicLink()) throw new Error(`Changed symlink is unsupported: ${file}`);
         if (!stat.isFile()) throw new Error(`Changed non-file/submodule is unsupported: ${file}`);
+        if (added.includes(file) && stat.size > MAX_SOURCE_FILE_BYTES) throw new Error(`New file is larger than ${MAX_SOURCE_FILE_BYTES / 1024} KiB and cannot be reviewed: ${file}. Commit it separately, ignore it, or split it.`);
         const canonical = await realpath(join(this.root, file));
         if (relative(this.root, canonical).startsWith(`..${sep}`)) throw new Error('Changed path escapes the worktree.');
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
+    const [workingBinary, cachedBinary, baseDiff] = await Promise.all([
+      git(this.root, ['diff', '--binary', '--no-ext-diff', '--no-textconv', '--no-renames', 'HEAD', '--']),
+      git(this.root, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--binary', '--']),
+      git(this.root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', this.baseSha, '--']),
+    ]);
     const hash = createHash('sha256').update(`${head}\0${branch}\0`);
     // HEAD is pinned: Git's binary working diff identifies all tracked changes,
     // including files outside the review diff. Unchanged assets need not be reread in JS.
-    hash.update(await git(this.root, ['diff', '--binary', '--no-ext-diff', '--no-textconv', '--no-renames', 'HEAD', '--']));
+    hash.update(workingBinary);
     let bytes = 0;
     for (const file of added.sort()) {
       hash.update(file).update('\0');
@@ -167,15 +254,18 @@ export class GitScope {
       } catch (error) { if (error.code === 'ENOENT') hash.update('deleted'); else throw error; }
       hash.update('\0');
     }
-    const index = createHash('sha256').update(await git(this.root, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--binary', '--'])).digest('hex');
-    let diff = await git(this.root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', this.baseSha, '--']);
+    const index = createHash('sha256').update(cachedBinary).digest('hex');
+    let diff = baseDiff;
     if (/^Binary files .* differ$/m.test(diff)) throw new Error('Binary changes need manual review.');
+    let size = Buffer.byteLength(diff);
     for (const file of added.sort()) {
-      const content = await readFile(join(this.root, file), 'utf8');
+      const content = await readNewFile(join(this.root, file));
       if (content.includes('\0')) throw new Error('Binary new files need manual review.');
-      diff += `\nNew file ${JSON.stringify(file)}:\n${content}\n`;
+      const entry = `\nNew file ${JSON.stringify(file)}:\n${content}\n`;
+      size += Buffer.byteLength(entry);
+      if (size <= MAX_REVIEW_BYTES) diff += entry; // past the limit the embedded diff is discarded, so stop building it
     }
-    if (Buffer.byteLength(diff) > MAX_REVIEW_BYTES) throw new Error('Diff exceeds the supported review budget; split the change.');
-    return { fingerprint: hash.digest('hex'), files, diff, index };
+    const oversized = size > MAX_REVIEW_BYTES;
+    return { fingerprint: hash.digest('hex'), files, diff: oversized ? undefined : diff, oversized, index };
   }
 }

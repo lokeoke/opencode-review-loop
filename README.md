@@ -23,14 +23,17 @@ Keep the clone at its installed path. Reinstall after moving it. OpenCode watche
 From your existing **Build** session:
 
 ```text
-/review-loop start
+/review-loop            # same as /review-loop start: preview, then approve
+/review-loop 64         # a pull request URL or number; flags also imply start
 /review-loop status
 /review-loop stop
 ```
 
+`start` is the default: a bare `/review-loop`, or any first argument other than `status` or `stop`, previews a start and asks for approval. Nothing runs until you approve. `/review-loop start …` still works.
+
 **No goal required.** Bare `start` previews uncommitted changes against a pinned HEAD, including staged and non-ignored new files. It proposes existing npm test/lint scripts and asks you to approve the scope and checks. No commands or models run during the preview. Approval is one-use, session-bound, expires after ten minutes, and is invalidated by source/index changes. If no scripts are found, supply a check explicitly.
 
-Approval shows the selected script bodies and their pre/post hooks, not just command names. Known launch-control files (package manifests, Makefiles, pytest/tox/pyproject/setup, conftest, Jest/Vitest/ESLint/Babel/Playwright/TypeScript configs, pom.xml, build.gradle, go.mod) are fingerprinted from the check directory up to the worktree root; changes stop execution before the next check and require a fresh approval. Automatic edits cannot change these control files. Confirmation revalidates integrity without re-running script discovery. The native server slash fallback also prints the exact one-use approval command.
+Approval shows the selected script bodies and their pre/post hooks, not just command names. Known launch-control files (package manifests, Makefiles, pytest/tox/pyproject/setup, conftest, Jest/Vitest/ESLint/Babel/Playwright/TypeScript configs, pom.xml, build.gradle, go.mod) are fingerprinted from the check directory up to the worktree root; changes stop execution before the next check and require a fresh approval. Automatic edits cannot change these control files. Confirmation revalidates integrity without re-running script discovery.
 
 Explicit checks authorize execution without the discovery confirmation dialog:
 
@@ -41,9 +44,15 @@ Explicit checks authorize execution without the discovery confirmation dialog:
 
 `--base main` reviews the complete branch/worktree change against its pinned merge base. Without it, the baseline is the current HEAD. `--goal` is optional extra context, not a required task description. Reviewers inspect the diff, surrounding source and repository conventions for concrete correctness, security, regression and test-quality problems; they must not invent acceptance criteria. The fixer transcript is not copied into reviewer context.
 
+### Reviewing a pull request
+
+`/review-loop start https://github.com/owner/repo/pull/64` (or just `64`) reviews that pull request's changes against its merge base. Requirements: the GitHub CLI (`gh`) signed in, and the checkout already at the pull request head (`gh pr checkout 64`; the plugin never switches branches). Uncommitted local edits are refused unless you pass `--include-uncommitted`. Merged pull requests are refused; closed and fork pull requests show a warning. Nothing is posted to GitHub. Pull request title and body are treated as untrusted data. Diffs too large to embed are read file by file, and a PASS requires every file to have been read to its end; this proves access, not understanding. Binary changes and more than 300 files stop the run.
+
 ## Transparency
 
-The TUI/Desktop parts render command results in native dialogs, and progress transitions as native toasts. RPC returns results directly without starting a model turn just to show text. Progress includes scope/base/files, reviewer model/session, check execution, review/fix phases, findings and terminal reasons. Status includes durable progress history, check results, and any policy denials (resource and reason). A denied edit says which path was refused and why, for example a directory resource, a protected control file, or an ignored path. Passive synthetic session messages are only a transcript fallback—not the primary UI.
+The TUI/Desktop parts render command results in native dialogs, and progress transitions as native toasts. RPC returns results directly without starting a model turn just to show text. Progress includes scope/base/files, reviewer model/session, check execution, review/fix phases, findings and terminal reasons. Status includes durable progress history, check results, and any policy denials (resource and reason). A denied edit says which path was refused and why, for example a directory resource, a protected control file, or an ignored path. The terminal report is also written to the transcript as a passive, non-resuming message.
+
+`/review-loop` is registered once by each client part (TUI and Desktop), never by the server, so the slash menu shows a single entry. The server only exposes the RPC those clients call. A host with neither client part has no slash command; the plugin logs a warning at load, and the RPC endpoint below still works. If `/review-loop` is missing, check that the plugin reports its `tui` or `gui` feature as active, then `/reload`. Windows opened before an upgrade can show the old command until reloaded.
 
 Progress retains at most 64 events, with bounded message text and a dropped-event count; full findings/check results remain in their structured state fields. The terminal report is always written to the session transcript (non-resuming) and also sent as an RPC notification, so clients without a TUI/Desktop part still see the result. Each channel receives it once. State is still persisted per event for crash visibility.
 
@@ -84,7 +93,7 @@ The same control files are protected from automatic edits repo-wide, and the fix
 
 This is **not an OS sandbox**. Approved checks and evolving repository scripts execute with your host authority and may have side effects. Existing trusted plugins remain privileged. Concurrent hostile filesystem replacement is not eliminated by path checks. Only run checks in trusted repositories.
 
-Git worktrees on macOS/Linux are supported, including detached HEAD. Submodules/non-file entries, changed symlinks, binary or oversized changes need manual review. Review input is capped at 192 KiB; Git command output at 8 MiB. Tracked integrity uses Git's binary working diff against pinned HEAD instead of rereading all unchanged assets into JavaScript. Untracked fingerprint bytes/search scans are capped at 64 MiB; source reads at 512 KiB per file with pagination. Git filters/index flags retain their native semantics: this is not forensic whole-filesystem integrity. Sensitive-filename checks are not a general secret scanner.
+Git worktrees on macOS/Linux are supported, including detached HEAD. Submodules/non-file entries, changed symlinks, binary or oversized changes need manual review. Review input is capped at 192 KiB; Git command output at 8 MiB. Tracked integrity uses Git's binary working diff against pinned HEAD instead of rereading all unchanged assets into JavaScript. Untracked fingerprint bytes/search scans are capped at 64 MiB; source reads at 512 KiB per file with pagination. A new (untracked) file above 512 KiB is rejected with a message naming it, including one the fixer creates mid-run, which ends that run; commit, ignore or split such files. Git filters/index flags retain their native semantics: this is not forensic whole-filesystem integrity. Sensitive-filename checks are not a general secret scanner.
 
 ## State and recovery
 

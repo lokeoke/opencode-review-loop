@@ -23,3 +23,32 @@ test('reviewer selection changes model lineage but never changes provider', () =
   assert.throws(() => selectReviewer([model('gpt-6.1-sol'), model('claude-sonnet-5.5', 'anthropic')], { id: 'gpt-5.3-codex' }), /different/i);
   assert.throws(() => selectReviewer(models, { id: 'gpt-6.1-sol' }, { reviewer: 'anthropic/claude-sonnet-5.5' }), /Copilot/i);
 });
+
+test('a pull request URL or number is a positional reference and other positionals stay errors', () => {
+  const url = 'https://github.com/pfizer-fit/kairos-product/pull/64';
+  assert.deepEqual(parseCommand(`start ${url}`).pr, { owner: 'pfizer-fit', repo: 'kairos-product', number: 64 });
+  assert.deepEqual(parseCommand('start 64 --check "npm test"').pr, { number: 64 });
+  assert.equal(parseCommand('start --include-uncommitted').includeUncommitted, true);
+  assert.throws(() => parseCommand('start main'), /Unknown argument: main.*pull request URL/);
+  assert.throws(() => parseCommand(`start ${url}/files`), /Unknown argument/);
+  assert.throws(() => parseCommand('start 64 --base main'), /own base/);
+  assert.throws(() => parseCommand('start 64 65'), /one pull request/i);
+});
+
+test('start is the default: a bare command, flags and a pull request reference all mean start', () => {
+  const url = 'https://github.com/pfizer-fit/kairos-product/pull/64';
+  assert.deepEqual(parseCommand(''), parseCommand('start'));
+  assert.deepEqual(parseCommand(undefined), parseCommand('start'));
+  assert.deepEqual(parseCommand('64'), parseCommand('start 64'));
+  assert.deepEqual(parseCommand(url), parseCommand(`start ${url}`));
+  assert.deepEqual(parseCommand('--base main --check "npm test"'), parseCommand('start --base main --check "npm test"'));
+  assert.equal(parseCommand('status').action, 'status');
+  assert.equal(parseCommand('stop').action, 'stop');
+  assert.throws(() => parseCommand('statuss'), /Unknown argument: statuss/);
+});
+
+test('a branch base keeps its full name in the scope label; only commit ids are shortened', async () => {
+  const { describeScope } = await import('../src/scope.mjs');
+  assert.match(describeScope({ base: 'feature/login' }), /against feature\/login$/);
+  assert.match(describeScope({ base: 'main' }, 'a'.repeat(40)), /against aaaaaaa$/);
+});

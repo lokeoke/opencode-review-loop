@@ -29,3 +29,8 @@ Regression coverage now includes permission API allow/ask/deny/missing behavior,
 - Syntax checks and whitespace checks passed.
 - Goal-free live smoke passed in two reviews on the existing authenticated 2.2.0 service: the reviewer found anonymous deletion, the original GPT fixer repaired it, checks passed, and the same Claude reviewer cleared it.
 - The service advertises the installed `review-loop` package's server, TUI and GUI parts as active. This proves discovery, not visual rendering in every client/version; no screenshot-based visual claim is made.
+
+## Pull-request review
+
+- 77 tests pass. Pull-request resolution uses a fake `gh` and real temporary Git repositories (strict parsing, wrong checkout refused, merged/closed/fork handling, narrow base fetch, bounded text). Approval is voided when the pull request changes after the preview. The oversized-diff gate is tested with fake reviewer sessions.
+- Not yet exercised live against a real GitHub pull request.

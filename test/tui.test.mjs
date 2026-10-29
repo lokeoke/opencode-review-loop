@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import plugin from '../src/tui.mjs';
+import { COMMAND_DESCRIPTION, COMMAND_NAME } from '../src/command.mjs';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 
@@ -57,4 +58,53 @@ test('proposed checks start only after explicit client approval', async () => {
     assert.deepEqual(calls, approved ? ['start', 'start --confirm token'] : ['start']);
     cleanup();
   }
+});
+
+test('each client part registers exactly one /review-loop slash command carrying the description', async () => {
+  let tuiCommands;
+  plugin.setup({
+    location: { directory: '/project' }, client: { rpc: () => ({ events: { on: () => () => {} } }) },
+    keymap: { layer: (factory) => { tuiCommands = factory().commands; } },
+    ui: { router: { current: () => ({}) }, toast: { show: () => {} }, dialog: {} },
+  });
+  assert.equal(tuiCommands.length, 1);
+  assert.equal(tuiCommands[0].slash.name, COMMAND_NAME);
+  assert.ok(tuiCommands[0].title.includes(COMMAND_DESCRIPTION), 'the TUI keymap has no documented description field, so the title carries it');
+
+  const added = [];
+  const moduleExports = {};
+  runInNewContext(await readFile(new URL('../dist/gui-experimental.cjs', import.meta.url), 'utf8'), {
+    exports: moduleExports,
+    require: (name) => name.endsWith('/rpc') ? { Rpc: { define: (value) => value } } : { Plugin: { define: (value) => value }, Command: 'command' },
+  });
+  moduleExports.default.setup({ client: { rpc: () => ({ events: { on: () => () => {} } }) }, sessions: { current: () => undefined }, toast: { show: () => {} }, dialogs: {}, add: (_token, value) => added.push(value) });
+  assert.equal(added.length, 1);
+  assert.equal(added[0].slash.name, COMMAND_NAME);
+  assert.equal(added[0].description, COMMAND_DESCRIPTION);
+});
+
+test('an empty command is sent as empty so the server starts, in the TUI and the Desktop bundle', async () => {
+  const calls = [];
+  let tuiCommand;
+  plugin.setup({
+    location: { directory: '/project' }, client: { rpc: () => ({ command: async (input) => { calls.push(input.text); return { text: 'ok' }; }, events: { on: () => () => {} } }) },
+    keymap: { layer: (factory) => { tuiCommand = factory().commands[0]; } },
+    ui: { router: { current: () => ({ type: 'session', sessionID: 'fixer' }) }, toast: { show: () => {} }, dialog: { alert: async () => {} } },
+  });
+  await tuiCommand.run('');
+  await tuiCommand.run(undefined);
+  let desktop;
+  const moduleExports = {};
+  runInNewContext(await readFile(new URL('../dist/gui-experimental.cjs', import.meta.url), 'utf8'), {
+    exports: moduleExports,
+    require: (name) => name.endsWith('/rpc') ? { Rpc: { define: (value) => value } } : { Plugin: { define: (value) => value }, Command: 'command' },
+  });
+  moduleExports.default.setup({
+    client: { rpc: () => ({ command: async (input) => { calls.push(input.text); return { text: 'ok' }; }, events: { on: () => () => {} } }) },
+    sessions: { current: () => ({ id: 'fixer', directory: '/project' }) }, toast: { show: () => {} }, dialogs: { alert: async () => {} },
+    add: (_token, value) => { desktop = value; },
+  });
+  await desktop.run('');
+  await desktop.run(undefined);
+  assert.deepEqual(calls, ['', '', '', '']);
 });

@@ -9,10 +9,12 @@ import { fixPrompt, reviewPrompt } from './prompts.mjs';
 import { checkPolicyFingerprint } from './check-policy.mjs';
 import { validateReview } from './contracts.mjs';
 import { DENIAL_PREFIX } from './security.mjs';
+import { scopeKind } from './scope.mjs';
 
 export const PHASE_TIMEOUT_MS = 10 * 60_000;
 export const RUN_TIMEOUT_MS = 45 * 60_000;
 const CONTROL_TIMEOUT_MS = 15_000;
+export const ALREADY_RUNNING = 'A review loop is already running in this session. Use /review-loop status to follow it or /review-loop stop to cancel it.';
 export const MAX_PROGRESS_EVENTS = 64;
 const MAX_PROGRESS_TEXT = 8192;
 const MAX_DENIALS = 32;
@@ -63,7 +65,7 @@ export class Engine {
 
   async start(sessionID, options) {
     if (this.disposed) throw new Error('Review-loop plugin is unloading.');
-    if (this.activeFor(sessionID)) throw new Error('An active run already owns this fixer session.');
+    if (this.activeFor(sessionID)) throw new Error(ALREADY_RUNNING);
     const fixer = await this.ctx.session.get({ sessionID });
     if (fixer.agent !== 'build') throw new Error('Switch to the Build agent before starting a review loop.');
     if (!fixer.model) throw new Error('The fixer session must have an explicit selected model.');
@@ -75,7 +77,7 @@ export class Engine {
     const lease = await this.store.acquire(scope.root, id);
     if (this.disposed) { await lease.release(); throw new Error('Review-loop plugin unloaded during startup.'); }
     const run = new Run({ id });
-    const active = { owner: this, run, scope, lease, fixerID: sessionID, fixerModel: fixer.model, fixerAgent: fixer.agent, reviewerModel, checks: options.checks, checkPolicy, goal: options.goal, abort: new AbortController() };
+    const active = { owner: this, run, scope, lease, fixerID: sessionID, fixerModel: fixer.model, fixerAgent: fixer.agent, reviewerModel, checks: options.checks, checkPolicy, goal: options.goal, pullRequest: options.pullRequest, abort: new AbortController() };
     this.active.set(id, active);
     run.state.worktree = scope.root;
     run.state.directory = scope.cwd;
@@ -85,6 +87,11 @@ export class Engine {
     run.state.reviewerModel = reviewerModel;
     run.state.goal = options.goal;
     run.state.approvedChecks = options.checks;
+    run.state.scopeKind = scopeKind(options);
+    if (options.pullRequest) {
+      const { body, title, ...identity } = options.pullRequest; // author text is passed to the reviewer, not stored in status
+      run.state.pullRequest = identity;
+    }
     run.state.checkPolicy = checkPolicy;
     run.state.checks = [];
     try { await lease.save(run.state); }
@@ -131,6 +138,8 @@ export class Engine {
         if (checked.fingerprint !== before.fingerprint || checked.index !== before.index) throw new Error('Verification changed source or the Git index.');
         run.checked(checked.fingerprint);
         active.changedFiles = new Set(checked.files);
+        active.unreadDiffs = checked.oversized ? new Set(checked.files) : new Set();
+        active.diffCursor = new Map();
         if (run.terminal) break;
         await active.lease.save(run.state);
         if (!active.reviewerID) {
@@ -206,6 +215,7 @@ export class Engine {
     const signal = AbortSignal.any([active.abort.signal, AbortSignal.timeout(PHASE_TIMEOUT_MS)]);
     const before = await this.ctx.session.context({ sessionID }, { signal });
     active.turnSessionID = sessionID;
+    active.scope.invalidate();
     try {
       await this.ctx.session.prompt({ sessionID, text, metadata: { reviewLoop: { id: active.run.state.id, round: active.run.state.round, role } }, delivery: 'queue' }, { signal });
       await this.ctx.session.wait({ sessionID }, { signal });
@@ -249,6 +259,10 @@ export class Engine {
         if ((await active.scope.source({ operation: 'read', path, offset: line, limit: 1 })).startsWith('[No matching')) throw new Error(`Evidence line ${path}:${line} does not exist.`);
       }
     }
+    if (input.complete && active.unreadDiffs.size) {
+      const shown = [...active.unreadDiffs].slice(0, 10).join(', ');
+      throw new Error(`Complete review refused: the diffs of ${active.unreadDiffs.size} changed file(s) were not read to the end (${shown}${active.unreadDiffs.size > 10 ? ', …' : ''}). Read each with review_loop_source operation "diff", or submit complete=false.`);
+    }
     active.run.submitReview(input, { validated: true });
     await active.lease.save(active.run.state);
   }
@@ -264,6 +278,15 @@ export class Engine {
     const active = this.activeFor(sessionID);
     if (!active || active.turnSessionID !== sessionID || active.run.terminal || (sessionID === active.reviewerID ? active.run.state.phase !== 'reviewing' || active.run.state.submission : active.run.state.phase !== 'fixing' || active.run.state.fix)) throw new Error('Source access is not available in this phase.');
     await this.assertSession(active, sessionID);
+    if (input.operation === 'diff') {
+      const page = await active.scope.fileDiff(input);
+      // Coverage only advances when a page starts exactly where the previous one ended, so skipped pages never count.
+      if (input.offset === undefined || input.offset === 1 || input.offset === active.diffCursor.get(input.path)) {
+        active.diffCursor.set(input.path, page.next);
+        if (page.complete) active.unreadDiffs.delete(input.path);
+      }
+      return page.text;
+    }
     return active.scope.source(input);
   }
 
@@ -275,7 +298,7 @@ export class Engine {
     const target = active.pendingInterruptID ?? active.turnSessionID;
     if (target) await this.interrupt(active, target);
     if (active.finished && !active.pendingInterruptID) {
-      await active.lease.save(active.run.state);
+      if (!active.lease.isReleased()) await active.lease.save(active.run.state);
       await active.lease.release();
       this.active.delete(active.run.state.id);
     }
