@@ -161,5 +161,7 @@ test('a bare start while a loop is running refuses immediately instead of showin
   assert.equal(second.confirmation, undefined, 'no approval dialog is offered for a start that cannot run');
   await command({ sessionID: 'fixer', text: 'stop' });
   release();
-  for (let i = 0; i < 100 && !/"phase": "stopped"/.test((await command({ sessionID: 'fixer', text: 'status' })).text); i++) await new Promise((resolve) => setImmediate(resolve));
+  let stopped = false;
+  for (let i = 0; i < 100 && !stopped; i++) { stopped = /"phase": "stopped"/.test((await command({ sessionID: 'fixer', text: 'status' })).text); if (!stopped) await new Promise((resolve) => setImmediate(resolve)); }
+  assert.ok(stopped, 'the run reaches the stopped phase');
 });

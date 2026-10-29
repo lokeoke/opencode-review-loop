@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { lstat, readFile, readlink, realpath } from 'node:fs/promises';
+import { lstat, open, readFile, readlink, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isCheckControlPath } from './check-policy.mjs';
 
@@ -45,6 +45,17 @@ function splitDiffLines(text) {
     }
     return chunks.length ? chunks : [''];
   });
+}
+
+// Reads at most MAX_SOURCE_FILE_BYTES even if the file grew after its size was checked.
+async function readNewFile(path) {
+  const handle = await open(path, 'r');
+  try {
+    const buffer = Buffer.alloc(MAX_SOURCE_FILE_BYTES + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > MAX_SOURCE_FILE_BYTES) throw new Error(`New file is larger than ${MAX_SOURCE_FILE_BYTES / 1024} KiB and cannot be reviewed.`);
+    return buffer.toString('utf8', 0, bytesRead);
+  } finally { await handle.close(); }
 }
 
 export class GitScope {
@@ -172,7 +183,7 @@ export class GitScope {
         if (!await this.contains(join(this.root, path))) throw new Error('Path is not a changed file in this review.');
         const stat = await lstat(join(this.root, path));
         if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SOURCE_FILE_BYTES) throw new Error('New file cannot be read: it is not a regular file or exceeds the per-file size limit.');
-        const content = await readFile(join(this.root, path), 'utf8');
+        const content = await readNewFile(join(this.root, path));
         if (content.includes('\0')) throw new Error('Binary new files need manual review.');
         text = `New file ${JSON.stringify(path)}:\n${content}`;
       } else text = await git(this.root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', this.baseSha, '--', path]);
@@ -248,7 +259,7 @@ export class GitScope {
     if (/^Binary files .* differ$/m.test(diff)) throw new Error('Binary changes need manual review.');
     let size = Buffer.byteLength(diff);
     for (const file of added.sort()) {
-      const content = await readFile(join(this.root, file), 'utf8');
+      const content = await readNewFile(join(this.root, file));
       if (content.includes('\0')) throw new Error('Binary new files need manual review.');
       const entry = `\nNew file ${JSON.stringify(file)}:\n${content}\n`;
       size += Buffer.byteLength(entry);

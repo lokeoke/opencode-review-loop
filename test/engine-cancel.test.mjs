@@ -89,3 +89,15 @@ test('cancellation aborts stalled reviewer creation and releases the worktree', 
   assert.equal((await f.engine.status('fixer')).phase, 'stopped');
   assert.equal(f.engine.activeFor('fixer'), undefined);
 });
+
+test('stop after a run finished does not touch the released lease, and real save errors still surface', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async () => { await f.engine.submitReview('reviewer', { runId: f.engine.activeFor('fixer').run.state.id, round: 1, complete: true, issues: [], resolutions: [] }); });
+  const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'], goal: 'Change value' });
+  await task.done;
+  await f.engine.stop('fixer');
+  const active = { run: { stop() {}, state: {} }, abort: new AbortController(), finished: true, lease: { isReleased: () => false, save: async () => { throw new Error('disk full'); }, release: async () => {} }, fixerID: 'x', run_: 0 };
+  f.engine.active.set('x', active);
+  f.engine.activeFor = () => active;
+  await assert.rejects(f.engine.stop('x'), /disk full/);
+});

@@ -298,7 +298,7 @@ export class Engine {
     const target = active.pendingInterruptID ?? active.turnSessionID;
     if (target) await this.interrupt(active, target);
     if (active.finished && !active.pendingInterruptID) {
-      try { await active.lease.save(active.run.state); } catch { /* execute() already persisted the terminal state and released the lease */ }
+      if (!active.lease.isReleased()) await active.lease.save(active.run.state);
       await active.lease.release();
       this.active.delete(active.run.state.id);
     }
