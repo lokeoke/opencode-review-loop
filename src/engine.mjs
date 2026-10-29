@@ -28,6 +28,14 @@ export class Engine {
     return [...this.active.values()].find((item) => item.fixerID === sessionID || item.reviewerID === sessionID);
   }
 
+  async progress(active, text) {
+    active.run.state.progress ??= [];
+    active.run.state.progress.push({ time: new Date().toISOString(), text });
+    await active.lease.save(active.run.state);
+    try { await this.report?.(active.fixerID, text); }
+    catch (error) { console.error(`[review-loop] Progress delivery failed: ${error.message}`); }
+  }
+
   async status(sessionID) {
     const active = this.activeFor(sessionID);
     if (active) return structuredClone(active.run.state);
@@ -47,6 +55,7 @@ export class Engine {
     const reviewerModel = selectReviewer(models.data ?? models, fixer.model, options);
     const id = randomUUID();
     const lease = await this.store.acquire(scope.root, id);
+    if (this.disposed) { await lease.release(); throw new Error('Review-loop plugin unloaded during startup.'); }
     const run = new Run({ id });
     const active = { owner: this, run, scope, lease, fixerID: sessionID, fixerModel: fixer.model, fixerAgent: fixer.agent, reviewerModel, checks: options.checks, goal: options.goal, abort: new AbortController() };
     this.active.set(id, active);
@@ -77,6 +86,8 @@ export class Engine {
       await this.assertSession(active, active.fixerID);
       active.initial = await scope.snapshot();
       if (!active.initial.files.length) throw new Error('No changes against the selected base.');
+      await this.progress(active, `Scope: ${active.initial.files.length} files against ${scope.baseSha}. Reviewer: ${active.reviewerModel.providerID}/${active.reviewerModel.id}.`);
+      if (!active.checks?.length) throw new Error('Checks need approval. Re-run with explicit --check commands (for example --check "npm test"). No checks or model calls were executed.');
       while (!run.terminal) {
         this.ensureRunning(active);
         const before = await scope.snapshot();
@@ -85,8 +96,10 @@ export class Engine {
         run.state.checks.push({ fingerprint: before.fingerprint, results: checks });
         for (const command of active.checks) {
           this.ensureRunning(active);
+          await this.progress(active, `Round ${run.state.round + 1}/4 · Checking: ${command}`);
           try { checks.push(await runCheck(command, scope.cwd, { signal: abort.signal })); }
           catch (error) {
+            if (error.cleanupUnconfirmed) { active.pendingInterruptID = 'check-process'; run.state.pendingProcessPID = error.pid; }
             checks.push({ command, exitCode: error.exitCode ?? null, exitSignal: error.exitSignal ?? null, durationMs: error.durationMs ?? null, error: error.message });
             throw error;
           }
@@ -95,6 +108,7 @@ export class Engine {
         await this.assertSession(active, active.fixerID);
         if (checked.fingerprint !== before.fingerprint || checked.index !== before.index) throw new Error('Verification changed source or the Git index.');
         run.checked(checked.fingerprint);
+        active.reviewFiles = new Set([...checked.files, ...run.state.issues.map((issue) => issue.file)]);
         if (run.terminal) break;
         await active.lease.save(run.state);
         if (!active.reviewerID) {
@@ -108,11 +122,13 @@ export class Engine {
               { action: 'review_loop_source', resource: '*', effect: 'allow' },
               { action: 'review_loop_submit_review', resource: '*', effect: 'allow' },
             ],
-          });
+          }, { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(CONTROL_TIMEOUT_MS)]) });
           active.reviewerID = reviewer.id;
+          if (abort.signal.aborted || run.terminal) { await this.interrupt(active, reviewer.id); throw new Error('Reviewer created after cancellation; no work scheduled.'); }
           run.state.reviewerID = reviewer.id;
           await active.lease.save(run.state);
         }
+        await this.progress(active, `Round ${run.state.round}/4 · Reviewing · session ${active.reviewerID}`);
         await this.turn(active, active.reviewerID, reviewPrompt(active, checked), 'reviewer');
         const reviewed = await scope.snapshot();
         await this.assertSession(active, active.fixerID);
@@ -120,6 +136,7 @@ export class Engine {
         run.reviewCompleted(reviewed.fingerprint);
         await active.lease.save(run.state);
         if (run.state.phase === 'fixing') {
+          await this.progress(active, `Round ${run.state.round}/4 · Fixing · findings: ${JSON.stringify(run.state.issues)}`);
           await this.turn(active, active.fixerID, fixPrompt(active), 'fixer');
           run.fixCompleted();
           await active.lease.save(run.state);
@@ -129,6 +146,7 @@ export class Engine {
       run.stop(error.message || 'Review loop failed.');
     } finally {
       clearTimeout(timer);
+      try { await this.progress(active, this.describe(active)); } catch (error) { active.persistenceError = error.message; }
       active.finished = true;
       try {
         await active.lease.save(run.state);
@@ -173,7 +191,9 @@ export class Engine {
       if (session.outcome !== 'succeeded') throw new Error(`${role} turn did not succeed.`);
       const old = new Set(before.map((message) => message.id));
       const messages = (await this.ctx.session.context({ sessionID }, { signal })).filter((message) => !old.has(message.id));
-      if (messages.some((message) => message.error || (message.type === 'assistant' && ['length', 'content-filter', 'error', 'unknown'].includes(message.finish)) || message.content?.some((part) => part.state?.status === 'error'))) throw new Error(`${role} turn had an incomplete result or tool error.`);
+      const tools = messages.flatMap((message) => message.content ?? []).filter((part) => part.type === 'tool');
+      const recovered = (part) => ['validation', 'invalid_input'].includes(part.state?.error?.type) && tools.some((later) => later.name === part.name && later.state?.status === 'completed' && tools.indexOf(later) > tools.indexOf(part));
+      if (messages.some((message) => message.error || (message.type === 'assistant' && ['length', 'content-filter', 'error', 'unknown'].includes(message.finish))) || tools.some((part) => part.state?.status === 'error' && !recovered(part))) throw new Error(`${role} turn had an incomplete result or unrecovered tool error.`);
     } catch (error) {
       await this.interrupt(active, sessionID);
       throw error;
@@ -189,8 +209,7 @@ export class Engine {
   async submitReview(sessionID, input) {
     const active = this.submission(sessionID, input, 'reviewer');
     await this.assertSession(active, sessionID);
-    const snapshot = await active.scope.snapshot();
-    if (input.issues.some((issue) => !snapshot.files.includes(issue.file))) throw new Error('Findings must point to a changed file in this review scope.');
+    if (!Array.isArray(input.issues) || input.issues.some((issue) => !active.reviewFiles.has(issue.file))) throw new Error('Findings must point to a current or previously flagged file in this review scope.');
     active.run.submitReview(input);
     await active.lease.save(active.run.state);
   }

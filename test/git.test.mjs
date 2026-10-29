@@ -33,6 +33,11 @@ test('a pinned scope includes staged, unstaged, and new files without modifying 
   assert.equal(await scope.canEdit('AGENTS.md'), false);
   assert.equal(await scope.canEdit('.opencode/plugins/escape.js'), false);
   assert.equal(await scope.canEdit('.git/config'), false);
+  await symlink('.git/config', join(root, 'alias'));
+  await symlink('/nonexistent-outside/file', join(root, 'dangling'));
+  assert.equal(await scope.canEdit('alias'), false);
+  assert.equal(await scope.canEdit('dangling'), false);
+  await rm(join(root, 'alias')); await rm(join(root, 'dangling'));
   assert.equal(git('diff', '--cached'), staged);
   await writeFile(join(root, 'new.js'), 'export const added = false;\n');
   assert.notEqual((await scope.snapshot()).fingerprint, before.fingerprint);
@@ -49,4 +54,5 @@ test('changed symlinks are rejected rather than reading outside the worktree', a
   await symlink('/etc/hosts', join(root, 'external'));
   const scope = await GitScope.open(root, 'main');
   await assert.rejects(scope.snapshot(), /symlink/i);
+  assert.doesNotMatch(await scope.source({ operation: 'search', query: 'localhost' }), /127\.0\.0\.1/);
 });

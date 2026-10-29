@@ -18,6 +18,10 @@ async function git(cwd, args) {
   return stdout;
 }
 const paths = (value) => value.split('\0').filter(Boolean);
+async function branchName(root) {
+  try { return (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim(); }
+  catch (error) { if (error.code === 1) return null; throw error; }
+}
 
 export class GitScope {
   static async open(directory, base) {
@@ -27,7 +31,7 @@ export class GitScope {
     const baseCommit = (await git(root, ['rev-parse', '--verify', `${base}^{commit}`])).trim();
     const baseSha = (await git(root, ['merge-base', 'HEAD', baseCommit])).trim();
     const head = (await git(root, ['rev-parse', 'HEAD'])).trim();
-    const branch = (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim();
+    const branch = await branchName(root);
     return new GitScope({ root, cwd, baseSha, head, branch });
   }
 
@@ -35,20 +39,18 @@ export class GitScope {
 
   async contains(path) {
     const candidate = resolve(this.cwd, path);
-    if (sensitivePath(relative(this.root, candidate))) return false;
-    let existing = candidate;
-    while (true) {
+    const rel = relative(this.root, candidate);
+    if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel) || sensitivePath(rel)) return false;
+    let existing = this.root;
+    for (const component of rel.split(sep).filter(Boolean)) {
+      existing = join(existing, component);
       try {
-        const canonical = await realpath(existing);
-        const rel = relative(this.root, canonical);
-        return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+        if ((await lstat(existing)).isSymbolicLink()) return false;
       } catch (error) {
         if (error.code !== 'ENOENT') return false;
-        const parent = resolve(existing, '..');
-        if (parent === existing) return false;
-        existing = parent;
       }
     }
+    return true;
   }
 
   async canEdit(path) {
@@ -70,13 +72,16 @@ export class GitScope {
     let matches = 0, bytes = 0, scanned = 0;
     for (const file of operation === 'read' ? [path] : files) {
       const absolute = join(this.root, file);
-      if (!await this.contains(absolute)) throw new Error('Source path escapes the worktree.');
       let stat;
       try { stat = await lstat(absolute); }
       catch (error) { if (error.code === 'ENOENT') continue; throw error; }
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SOURCE_FILE_BYTES) {
         if (operation === 'read') throw new Error('Source is a symlink, non-file, or exceeds the file budget.');
         continue;
+      }
+      if (!await this.contains(absolute)) {
+        if (operation === 'search') continue;
+        throw new Error('Source path escapes the worktree.');
       }
       scanned += stat.size;
       if (scanned > MAX_SOURCE_BYTES) throw new Error('Search exceeded source budget.');
@@ -99,9 +104,8 @@ export class GitScope {
 
   async snapshot() {
     const head = (await git(this.root, ['rev-parse', 'HEAD'])).trim();
-    const branch = (await git(this.root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim();
+    const branch = await branchName(this.root);
     if (head !== this.head || branch !== this.branch) throw new Error('Branch or HEAD changed; start a new run.');
-    const tracked = paths(await git(this.root, ['ls-files', '-z']));
     const added = paths(await git(this.root, ['ls-files', '--others', '--exclude-standard', '-z']));
     const changed = paths(await git(this.root, ['diff', '--name-only', '--no-renames', '-z', this.baseSha, '--']));
     const files = [...new Set([...changed, ...added])].sort();
@@ -116,8 +120,11 @@ export class GitScope {
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
     const hash = createHash('sha256').update(`${head}\0${branch}\0`);
+    // HEAD is pinned: Git's binary working diff identifies all tracked changes,
+    // including files outside the review diff. Unchanged assets need not be reread in JS.
+    hash.update(await git(this.root, ['diff', '--binary', '--no-ext-diff', '--no-textconv', '--no-renames', 'HEAD', '--']));
     let bytes = 0;
-    for (const file of [...new Set([...tracked, ...added])].sort()) {
+    for (const file of added.sort()) {
       hash.update(file).update('\0');
       try {
         const stat = await lstat(join(this.root, file));

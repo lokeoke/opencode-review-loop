@@ -14,7 +14,12 @@ export function runCheck(command, cwd, { signal, timeoutMs = CHECK_TIMEOUT_MS } 
     const kill = (kind) => {
       if (!Number.isInteger(child.pid)) return;
       try { process.kill(-child.pid, kind); }
-      catch (error) { if (error.code !== 'ESRCH') throw error; }
+      catch (error) {
+        if (error.code !== 'ESRCH') {
+          failure = `Process cleanup unconfirmed: ${error.message}`;
+          reject(Object.assign(new Error(failure), { cleanupUnconfirmed: true, pid: child.pid }));
+        }
+      }
     };
     const stop = (reason) => {
       if (failure) return;

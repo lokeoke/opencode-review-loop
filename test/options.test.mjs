@@ -7,9 +7,13 @@ test('start explicitly authorizes checks and preserves quoted arguments', () => 
   assert.deepEqual(parseCommand('start --base main --goal "Fix guest access" --check "npm test" --check \'npm run lint\''), {
     action: 'start', base: 'main', goal: 'Fix guest access', checks: ['npm test', 'npm run lint'], allowSameFamily: false,
   });
-  assert.throws(() => parseCommand('start --goal fix'), /check/i);
+  assert.deepEqual(parseCommand('start'), { action: 'start', base: 'HEAD', checks: [], allowSameFamily: false });
   assert.throws(() => parseCommand('start --check "npm test" --goal fix --unknown'), /unknown/i);
   assert.throws(() => parseCommand('start --check "npm test'), /quote/i);
+});
+
+test('check arguments preserve shell backslashes rather than silently rewriting commands', () => {
+  assert.deepEqual(parseCommand(String.raw`start --check "printf '%s\\n' '\d+'"`).checks, [String.raw`printf '%s\n' '\d+'`]);
 });
 
 test('reviewer selection changes model lineage but never changes provider', () => {

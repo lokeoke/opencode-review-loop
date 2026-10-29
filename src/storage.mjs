@@ -26,7 +26,7 @@ export class RunStore {
     const nonce = randomUUID();
     try { await writeFile(join(lock, 'owner.json'), JSON.stringify({ id, nonce, pid: process.pid, worktree }), { mode: 0o600, flag: 'wx' }); }
     catch (error) { await rm(lock, { recursive: true, force: true }); throw error; }
-    let released = false, writes = Promise.resolve();
+    let released = false, releasePromise, writes = Promise.resolve();
     const atomic = async (path, content) => {
       const temporary = `${path}.${randomUUID()}.tmp`;
       try {
@@ -45,13 +45,16 @@ export class RunStore {
         writes = write.catch(() => {}); // The caller receives the rejection; later terminal-state writes may still succeed.
         return write;
       },
-      release: async () => {
-        if (released) return;
-        await writes;
-        const owner = JSON.parse(await readFile(join(lock, 'owner.json'), 'utf8'));
-        if (owner.nonce !== nonce) throw new Error('Worktree lease ownership changed.');
+      release: () => {
+        if (releasePromise) return releasePromise;
         released = true;
-        await rm(lock, { recursive: true });
+        releasePromise = (async () => {
+          await writes;
+          const owner = JSON.parse(await readFile(join(lock, 'owner.json'), 'utf8'));
+          if (owner.nonce !== nonce) throw new Error('Worktree lease ownership changed.');
+          await rm(lock, { recursive: true });
+        })();
+        return releasePromise;
       },
     };
   }

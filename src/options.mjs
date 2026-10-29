@@ -4,9 +4,11 @@ const PREFERENCES = ['claude-sonnet-5.5', 'gpt-6.1-sol', 'gemini-4-argon'];
 function tokenize(input) {
   const tokens = [];
   let token = '', quote, escaped = false, started = false;
-  for (const char of input.trim()) {
+  const source = input.trim();
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
     if (escaped) { token += char; escaped = false; started = true; }
-    else if (char === '\\' && quote !== "'") { escaped = true; started = true; }
+    else if (char === '\\' && quote !== "'" && (!quote || ['"', '\\', '$', '`', '\n'].includes(source[i + 1]))) { escaped = true; started = true; }
     else if (quote) { if (char === quote) quote = undefined; else token += char; }
     else if (char === '"' || char === "'") { quote = char; started = true; }
     else if (/\s/.test(char)) { if (started) tokens.push(token); token = ''; started = false; }
@@ -24,7 +26,7 @@ export function parseCommand(input = '') {
     if (args.length) throw new Error(`${action} takes no arguments.`);
     return { action };
   }
-  const result = { action, base: 'main', checks: [], allowSameFamily: false };
+  const result = { action, base: 'HEAD', checks: [], allowSameFamily: false };
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i];
@@ -37,8 +39,7 @@ export function parseCommand(input = '') {
     if (key === '--check') result.checks.push(value);
     else result[key.slice(2)] = value;
   }
-  if (!result.checks.length || result.checks.length > 10) throw new Error('Provide 1–10 explicit --check commands.');
-  if (!result.goal) throw new Error('Provide the task requirements with --goal.');
+  if (result.checks.length > 10) throw new Error('Provide at most 10 explicit --check commands.');
   if (result.base.startsWith('-')) throw new Error('Base cannot be an option.');
   return result;
 }
