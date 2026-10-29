@@ -49,4 +49,11 @@ The live runner also no longer invokes a differently versioned CLI: it pins the 
 | 7. Extra git spawns | Fixed: a single numstat against HEAD, which is what the encoded fingerprint covers. |
 | 8. Optional introduced_by in strict schemas | Fixed: declared in the schema up front as required-but-nullable. Regression asserts the schema and null acceptance. |
 
-The updated deterministic suite has 52 passing tests (previously 48). These dispositions do not automatically resolve external review threads or substitute for reviewer verification.
+## Live-smoke regression after the second follow-up
+
+The live run stopped with `fixer turn had an incomplete result or unrecovered tool error` although the fixer's final patch and submission were correct. Evidence from the fixer session: its first `patch`, using an absolute path, was rejected by this plugin's own guard (`permission.rejected`); a retry with a relative path succeeded and the fix was submitted. Two causes, both fixed:
+
+- **Opaque, possibly mis-classified denial.** `canEdit` threw for a directory resource such as the worktree root (git exits 128 on an empty pathspec) and the hook's catch silently denied the entire edit. Reproduced directly against the retained fixture. `editDenial` now never throws, returns a specific reason, and the denial message and `status` (`denials`) name the exact resource and reason. What OpenCode actually sent for the original rejected call is not known; the new record will show it if it recurs. The policy was not loosened on a guess.
+- **A denial that executed nothing failed the whole turn.** A guard denial followed by a successful same-tool call is now recoverable, like a nonexistent tool name. A denial with no successful retry still fails closed. Both cases have regressions.
+
+The updated deterministic suite has 54 passing tests (previously 48). These dispositions do not automatically resolve external review threads or substitute for reviewer verification.

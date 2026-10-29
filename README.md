@@ -43,7 +43,7 @@ Explicit checks authorize execution without the discovery confirmation dialog:
 
 ## Transparency
 
-The TUI/Desktop parts render command results in native dialogs, and progress transitions as native toasts. RPC returns results directly without starting a model turn just to show text. Progress includes scope/base/files, reviewer model/session, check execution, review/fix phases, findings and terminal reasons. Status includes durable progress history and check results. Passive synthetic session messages are only a transcript fallback—not the primary UI.
+The TUI/Desktop parts render command results in native dialogs, and progress transitions as native toasts. RPC returns results directly without starting a model turn just to show text. Progress includes scope/base/files, reviewer model/session, check execution, review/fix phases, findings and terminal reasons. Status includes durable progress history, check results, and any policy denials (resource and reason). A denied edit says which path was refused and why, for example a directory resource, a protected control file, or an ignored path. Passive synthetic session messages are only a transcript fallback—not the primary UI.
 
 Progress retains at most 64 events, with bounded message text and a dropped-event count; full findings/check results remain in their structured state fields. The terminal report is always written to the session transcript (non-resuming) and also sent as an RPC notification, so clients without a TUI/Desktop part still see the result. Each channel receives it once. State is still persisted per event for crash visibility.
 
