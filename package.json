@@ -1,0 +1,15 @@
+{
+  "name": "opencode-review-loop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Controlled global review-and-fix loops for OpenCode V2",
+  "exports": { ".": "./src/index.mjs" },
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test",
+    "check": "node scripts/check.mjs",
+    "install:global": "node scripts/install.mjs",
+    "uninstall:global": "node scripts/install.mjs --uninstall"
+  }
+}
