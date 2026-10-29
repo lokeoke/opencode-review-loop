@@ -1,7 +1,13 @@
-# Claim worktrees atomically and fail closed across runtime loss
+# Exclusive, auditable state with explicit recovery
 
-Status: Accepted
+Status: Accepted for this unmerged implementation
 
-Global availability requires cross-project isolation and protection against concurrent plugin instances. Use a canonical-worktree hash in a user-level state directory, atomic directory creation for the exclusive claim, and serialized atomic JSON replacement for latest state and per-run archives. This avoids assuming transactional guarantees from plugin storage and preserves past reviews without adding a database dependency.
+Global availability requires cross-project isolation and protection across location-scoped plugin instances. Use canonical-worktree hashes in a user-level state directory, atomic directory creation for claims, and serialized atomic JSON replacement for latest state/per-run archives. A shared in-process registry follows session ownership across locations; cleanup cancels only runs owned by that plugin instance.
 
-A run is never reconstructed as executable work after reload or process loss. Stale or unconfirmed-interruption claims require human inspection rather than automatic lock stealing. This trades convenience after a crash for protection against duplicate work or a still-running reviewer/check. Archive and latest files are separate replacements, not a transaction; archives are written first and incomplete state cannot authorize continuation.
+Lease release closes synchronously, rejects late saves, and shares one release promise. This prevents save/release/finalizer races from removing a replacement claim or overwriting its latest state. Run/nonce identity is checked before cleanup. Archives and latest state are separate atomic replacements, not a transaction.
+
+Runtime loss never reconstructs executable work. Instead of leaving users with only manual lock deletion, provide an explicit recovery operation: serialize recovery, validate run/nonce/host identity, refuse live or unknown ownership, recheck before archiving the exact claim, and mark the old run stopped. The operator must explicitly confirm all surviving run/check processes stopped. A dead parent PID is insufficient proof; PID reuse conservatively blocks recovery rather than risking duplicate work.
+
+Cancellation applies to reviewer creation as well as running turns/checks. A late returned session must be interrupted before scheduling work. Startup rechecks disposal after asynchronous acquisition. Failed interruption/signalling retains ownership and reports unconfirmed cleanup; it is not success.
+
+This is deliberately less convenient than automatic lock stealing, but recovery is available without pretending process liveness can be inferred perfectly.

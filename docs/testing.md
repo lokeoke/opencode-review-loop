@@ -15,8 +15,17 @@ Implementation started with failing tests for plugin registration and each new b
 - OpenCode's model list carries a location/data envelope; session operations return their native domain objects.
 - Omitted model variants may normalize to `default`; equality must account for this without treating genuinely different variants as equal.
 - Structured submission is provisional: session success and unchanged source are checked before accepting it.
-- Passive synthetic messages use `resume: false`. They can remain in the inbox and must not be used as a high-frequency polling transport while the fixer is active. The status script reads the public state store without touching model context.
+- Passive synthetic messages use `resume: false` and are only a transcript fallback. Actual client controls use RPC dialogs/progress events. TUI/Desktop adapter tests cover visible results without model turns; actual visual verification in each client is a separate gate.
 - Custom source/submission tools are exposed directly (`codemode: false`), so the reviewer does not require the general Code Mode execution tool.
 - Location-scoped plugin instances share in-process session ownership. Unloading one location cancels only runs it owns; guards can still recognize sessions that move to another location.
 
-The connected service used for live validation reported OpenCode 2.2.0. CLI and service versions can differ; inspect the connected service rather than inferring compatibility solely from the CLI executable.
+The connected service used for live validation reported OpenCode 2.2.0. An installed 2.0.25 CLI was discovered replacing that service during API discovery, interrupting smoke runs. The runner now connects to the already-running authenticated local service and refuses identity changes; it never starts/replaces the service or logs its credentials.
+
+Regression coverage now includes permission API allow/ask/deny/missing behavior, command quoting, bare-start preview/approval invalidation, symlink aliases/dangling targets, detached HEAD, concurrent release/late saves, live/dead-owner recovery, disposal during startup, cancelled reviewer creation, process signalling failures and harmless unknown-tool-name recovery. See [review dispositions](review-feedback.md).
+
+## Latest proof
+
+- 43 deterministic tests passed, including TUI/Desktop native-adapter output and explicit approval handling.
+- Syntax checks and whitespace checks passed.
+- Goal-free live smoke passed in two reviews on the existing authenticated 2.2.0 service: the reviewer found anonymous deletion, the original GPT fixer repaired it, checks passed, and the same Claude reviewer cleared it.
+- The service advertises the installed `review-loop` package's server, TUI and GUI parts as active. This proves discovery, not visual rendering in every client/version; no screenshot-based visual claim is made.

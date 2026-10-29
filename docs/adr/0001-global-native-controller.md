@@ -1,7 +1,13 @@
-# Use a global OpenCode V2 plugin to own review runs
+# Global native controller with goal-free review and visible clients
 
-Status: Accepted
+Status: Accepted for this unmerged implementation
 
-A prompt-only command cannot enforce round limits, result ownership, or cancellation. Use one globally installed V2 server plugin whose controller schedules review and fix turns; the existing session remains the fixer and a fresh linked session is the reviewer. This couples the integration to the V2 plugin contract, but avoids external CLI authentication and output parsing. Project repositories require no installed files.
+The user wants an ordinary diff review, not a workflow that requires restating acceptance criteria. Bare `start` therefore previews uncommitted changes against pinned HEAD; an explicit base selects branch/worktree review. Optional goal text adds context without becoming mandatory. The reviewer gets source/diff evidence, not the fixer's persuasive transcript, and must label inferred intent rather than invent requirements.
 
-The controller will not push or merge reviewed projects. Git-only worktrees are the first supported scope. A global installation is availability, not permission to start automatically.
+A server plugin owns bounded scheduling, session identity, check execution and durable state. The original session remains the fixer; a fresh linked Copilot session uses a different model lineage where available and is reused for re-review. Compared with prompt-only orchestration this has more integration code, but limits and completion are enforced outside the models. Compared with external CLIs it avoids another authentication/session adapter.
+
+Passive synthetic messages proved insufficient for visible feedback. Client parts call a shared JSON-Schema RPC contract, return command results immediately through native dialogs, and render progress events through native toasts. Durable progress is available through status when events are missed. TUI and experimental Desktop entries use host-provided SDKs; no runtime dependency bundle is required. The plugin uses `review-loop`, not the host-reserved `opencode` namespace.
+
+Bare start discovers existing npm test/lint scripts without executing them, previews the scope, and requests explicit approval. Approval is session-bound, one-use and expiring; a changed source/index fingerprint invalidates it. Explicit check arguments are direct authorization. Repositories without discoverable scripts require an explicit command rather than guessed execution.
+
+Global installation needs no per-project files. Client-version compatibility and actual visual rendering remain separate integration gates; adapter tests alone do not prove every client displays the UI correctly.
