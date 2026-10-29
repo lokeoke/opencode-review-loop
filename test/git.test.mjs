@@ -120,3 +120,17 @@ test('resource paths are resolved against the session directory as OpenCode repo
   assert.equal(await scope.editDenial(canonicalFile), undefined);
   assert.match(await scope.editDenial(relative(alias, join(base, 'elsewhere.js'))), /outside the worktree/, 'a genuinely external path is still refused');
 });
+
+test('uncommitted lists tracked edits and new files but not committed work', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'opencode-review-loop-extras-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+  git('init', '-b', 'main');
+  await writeFile(join(root, 'a.js'), '1');
+  git('add', '.'); git('-c', 'user.name=T', '-c', 'user.email=t@example.invalid', 'commit', '-m', 'base');
+  const scope = await GitScope.open(root, 'HEAD');
+  assert.deepEqual(await scope.uncommitted(), []);
+  await writeFile(join(root, 'a.js'), '2');
+  await writeFile(join(root, 'new.js'), 'x');
+  assert.deepEqual(await scope.uncommitted(), ['a.js', 'new.js']);
+});

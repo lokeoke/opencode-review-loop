@@ -1,3 +1,5 @@
+import { parsePullRequestRef } from './pr.mjs';
+
 export const COPILOT = 'github-copilot';
 const PREFERENCES = ['claude-sonnet-5.5', 'gpt-6.1-sol', 'gemini-4-argon'];
 
@@ -30,7 +32,15 @@ export function parseCommand(input = '') {
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i];
+    if (!key.startsWith('--')) {
+      const pr = parsePullRequestRef(key);
+      if (!pr) throw new Error(`Unknown argument: ${key}. Use a pull request URL (https://github.com/owner/repo/pull/N), a pull request number, or an option.`);
+      if (result.pr) throw new Error('Only one pull request can be reviewed at a time.');
+      result.pr = pr;
+      continue;
+    }
     if (key === '--allow-same-family') { result.allowSameFamily = true; continue; }
+    if (key === '--include-uncommitted') { result.includeUncommitted = true; continue; }
     if (!['--base', '--goal', '--check', '--reviewer', '--confirm'].includes(key)) throw new Error(`Unknown option: ${key}`);
     if (key !== '--check' && seen.has(key)) throw new Error(`Duplicate option: ${key}`);
     seen.add(key);
@@ -39,6 +49,7 @@ export function parseCommand(input = '') {
     if (key === '--check') result.checks.push(value);
     else result[key.slice(2)] = value;
   }
+  if (result.pr && seen.has('--base')) throw new Error('A pull request defines its own base; remove --base.');
   if (result.checks.length > 10) throw new Error('Provide at most 10 explicit --check commands.');
   if (result.base.startsWith('-')) throw new Error('Base cannot be an option.');
   return result;

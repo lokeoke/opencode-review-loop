@@ -3,10 +3,19 @@ import { join } from 'node:path';
 import { GitScope } from './git.mjs';
 import { checkPolicyFingerprint } from './check-policy.mjs';
 
+const MAX_LISTED_EXTRAS = 10;
+
 export async function inspectScope(directory, options) {
   const scope = await GitScope.open(directory, options.base);
   const snapshot = await scope.snapshot();
   if (!snapshot.files.length) throw new Error('No changes in the selected scope. Use --base main to review committed branch changes.');
+  if (options.pullRequest && !options.includeUncommitted) {
+    const extra = await scope.uncommitted();
+    if (extra.length) {
+      const shown = extra.slice(0, MAX_LISTED_EXTRAS).join(', ') + (extra.length > MAX_LISTED_EXTRAS ? `, and ${extra.length - MAX_LISTED_EXTRAS} more` : '');
+      throw new Error(`This checkout has uncommitted changes that are not part of pull request #${options.pullRequest.number}: ${shown}. Commit, stash or discard them, or pass --include-uncommitted to review them too.`);
+    }
+  }
   return { scope, snapshot };
 }
 

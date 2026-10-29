@@ -9,6 +9,7 @@ import { fixPrompt, reviewPrompt } from './prompts.mjs';
 import { checkPolicyFingerprint } from './check-policy.mjs';
 import { validateReview } from './contracts.mjs';
 import { DENIAL_PREFIX } from './security.mjs';
+import { scopeKind } from './scope.mjs';
 
 export const PHASE_TIMEOUT_MS = 10 * 60_000;
 export const RUN_TIMEOUT_MS = 45 * 60_000;
@@ -75,7 +76,7 @@ export class Engine {
     const lease = await this.store.acquire(scope.root, id);
     if (this.disposed) { await lease.release(); throw new Error('Review-loop plugin unloaded during startup.'); }
     const run = new Run({ id });
-    const active = { owner: this, run, scope, lease, fixerID: sessionID, fixerModel: fixer.model, fixerAgent: fixer.agent, reviewerModel, checks: options.checks, checkPolicy, goal: options.goal, abort: new AbortController() };
+    const active = { owner: this, run, scope, lease, fixerID: sessionID, fixerModel: fixer.model, fixerAgent: fixer.agent, reviewerModel, checks: options.checks, checkPolicy, goal: options.goal, pullRequest: options.pullRequest, abort: new AbortController() };
     this.active.set(id, active);
     run.state.worktree = scope.root;
     run.state.directory = scope.cwd;
@@ -85,6 +86,11 @@ export class Engine {
     run.state.reviewerModel = reviewerModel;
     run.state.goal = options.goal;
     run.state.approvedChecks = options.checks;
+    run.state.scopeKind = scopeKind(options);
+    if (options.pullRequest) {
+      const { body, ...identity } = options.pullRequest; // author text is passed to the reviewer, not stored in status
+      run.state.pullRequest = identity;
+    }
     run.state.checkPolicy = checkPolicy;
     run.state.checks = [];
     try { await lease.save(run.state); }

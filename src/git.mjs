@@ -70,6 +70,13 @@ export class GitScope {
     return true;
   }
 
+  // Paths whose working-tree state differs from the pinned HEAD: tracked edits plus untracked, non-ignored files.
+  async uncommitted() {
+    const tracked = paths(await git(this.root, ['diff', '--name-only', '-z', '--no-renames', 'HEAD', '--']));
+    const added = paths(await git(this.root, ['ls-files', '--others', '--exclude-standard', '-z']));
+    return [...new Set([...tracked, ...added])].sort();
+  }
+
   // Returns why an automatic edit of this path is refused, or undefined when allowed. Never throws:
   // an unclassifiable path is a visible, specific denial rather than a silent one.
   async editDenial(path) {
