@@ -9,6 +9,7 @@
   "scripts": {
     "test": "node --test",
     "check": "node scripts/check.mjs",
+    "status": "node scripts/status.mjs",
     "install:global": "node scripts/install.mjs",
     "uninstall:global": "node scripts/install.mjs --uninstall"
   }
