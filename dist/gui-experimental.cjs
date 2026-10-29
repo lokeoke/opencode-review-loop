@@ -17,7 +17,7 @@ exports.default = Plugin.define({
         if (!session) { show('Open an existing Build session first.'); return; }
         show('Processing command…');
         try {
-          let result = await ctx.client.rpc(contract).command({ sessionID: session.id, text: input || 'status' }, { location: { directory: session.directory } });
+          let result = await ctx.client.rpc(contract).command({ sessionID: session.id, text: input ?? '' }, { location: { directory: session.directory } });
           if (result.confirmation) {
             if (!await ctx.dialogs.confirm({ title: 'Approve review scope and checks', description: result.text })) return;
             result = await ctx.client.rpc(contract).command({ sessionID: session.id, text: result.confirmation }, { location: { directory: session.directory } });

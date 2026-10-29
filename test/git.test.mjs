@@ -190,3 +190,13 @@ test('a single very long changed line is delivered in full across pages', async 
   do { page = await scope.fileDiff({ path: 'min.js', offset, limit: 200 }); text += page.text; offset = page.next; } while (!page.complete);
   assert.ok(text.includes('TAIL'));
 });
+
+test('a long line is never split inside a surrogate pair', async (t) => {
+  const root = await oversizedFixture(t, 0);
+  await writeFile(join(root, 'emoji.js'), `${'a'.repeat(3999)}😀${'b'.repeat(10)}\n`);
+  const scope = await GitScope.open(root, 'HEAD');
+  let text = '', page, offset = 1;
+  do { page = await scope.fileDiff({ path: 'emoji.js', offset, limit: 200 }); text += page.text; offset = page.next; } while (!page.complete);
+  assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(text), 'no lone surrogate');
+  assert.ok(text.includes('😀'));
+});

@@ -45,7 +45,7 @@ export class GitScope {
     return new GitScope({ root, cwd, sessionDirectory: resolve(directory), baseSha, head, branch });
   }
 
-  constructor(info) { Object.assign(this, info); }
+  constructor(info) { Object.assign(this, info); this.diffCache = new Map(); }
 
   // Resource paths are relative to the session directory as OpenCode reports it. Resolve them lexically there,
   // then map anything under that directory onto its canonical form. Deliberately no realpath on the result:
@@ -147,15 +147,23 @@ export class GitScope {
     if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error('Invalid diff pagination.');
     const { added, files } = await this.changedPaths();
     if (typeof path !== 'string' || !files.includes(path)) throw new Error('Path is not a changed file in this review.');
-    let text;
-    if (added.includes(path)) {
+    let text = this.diffCache.get(path);
+    if (text !== undefined) { /* served from this snapshot's cache */ }
+    else if (added.includes(path)) {
       if (!await this.contains(join(this.root, path))) throw new Error('Path is not a changed file in this review.');
       text = `New file ${JSON.stringify(path)}:\n${await readFile(join(this.root, path), 'utf8')}`;
     } else text = await git(this.root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', this.baseSha, '--', path]);
+    this.diffCache.set(path, text);
     // Long lines are delivered in full as consecutive chunks, so reaching the end always means everything was returned.
     const lines = text.split('\n').flatMap((line) => {
       const chunks = [];
-      for (let start = 0; start < line.length; start += MAX_DIFF_LINE_CHARS) chunks.push(line.slice(start, start + MAX_DIFF_LINE_CHARS));
+      for (let start = 0; start < line.length;) {
+        let end = Math.min(start + MAX_DIFF_LINE_CHARS, line.length);
+        const last = line.charCodeAt(end - 1);
+        if (end < line.length && last >= 0xd800 && last <= 0xdbff) end -= 1; // never split a surrogate pair
+        chunks.push(line.slice(start, end));
+        start = end;
+      }
       return chunks.length ? chunks : [''];
     });
     if (offset > lines.length) throw new Error(`Offset ${offset} is beyond the end of this diff (${lines.length} lines).`);
@@ -175,6 +183,7 @@ export class GitScope {
     const head = (await git(this.root, ['rev-parse', 'HEAD'])).trim();
     const branch = await branchName(this.root);
     if (head !== this.head || branch !== this.branch) throw new Error('Branch or HEAD changed; start a new run.');
+    this.diffCache.clear(); // a new snapshot may follow edits
     const { added, files } = await this.changedPaths();
     if (files.length > MAX_REVIEW_FILES) throw new Error(`The change touches more than ${MAX_REVIEW_FILES} files; split it into smaller reviews.`);
     // The encoded --binary fingerprint below is against HEAD; reject binary changes before buffering it.

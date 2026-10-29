@@ -25,7 +25,7 @@ export default {
           if (!id) { display('Open an existing Build session first.', 'error'); return; }
           display('Processing command…');
           try {
-            let result = await rpc.command({ sessionID: id, text: input || 'status' }, { location: location() });
+            let result = await rpc.command({ sessionID: id, text: input ?? '' }, { location: location() });
             if (result.confirmation) {
               if (!await context.ui.dialog.confirm({ title: 'Approve review scope and checks', message: result.text })) return;
               result = await rpc.command({ sessionID: id, text: result.confirmation }, { location: location() });

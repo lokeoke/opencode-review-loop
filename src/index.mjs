@@ -69,7 +69,7 @@ export function createPlugin(dependencies = {}) {
               if (approval.options.pr) {
                 const fresh = (await withPullRequest(approval.options)).pullRequest;
                 const approved = approval.options.pullRequest;
-                if (fresh.headSha !== approved.headSha || fresh.baseSha !== approved.baseSha || fresh.state !== approved.state) throw new Error(`Pull request #${approved.number} changed since approval. Run start again.`);
+                if (fresh.headSha !== approved.headSha || fresh.baseSha !== approved.baseSha || fresh.state !== approved.state || fresh.title !== approved.title) throw new Error(`Pull request #${approved.number} changed since approval. Run start again.`);
               }
               const session = await ctx.session.get({ sessionID });
               const current = await inspectScope(session.location.directory, approval.options);
@@ -91,6 +91,7 @@ export function createPlugin(dependencies = {}) {
             }
             if (!approved) {
               options = await withPullRequest(options);
+              if (options.pullRequest?.isCrossRepository) throw new Error('This is a fork pull request: its checks run contributor code. Start without --check so the checks are shown for approval first.');
               if (options.pullRequest) await inspectScope((await ctx.session.get({ sessionID })).location.directory, options);
             }
             const { id } = await engine.start(sessionID, options);

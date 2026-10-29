@@ -114,3 +114,14 @@ test('an approval is void if the pull request changed after the preview', async 
   assert.match(result.text, /gh pr checkout 64|changed since approval/);
   assert.equal(result.confirmation, undefined);
 });
+
+test('a fork pull request cannot start with explicit checks, and an edited title voids approval', async (t) => {
+  const f = await pullRequestFixture(t);
+  f.set({ isCrossRepository: true });
+  const refused = await f.run('start 64 --check "npm test"');
+  assert.match(refused.text, /fork pull request.*without --check/is);
+  f.set({ isCrossRepository: false });
+  const preview = await f.run('start 64');
+  f.set({ title: 'A different title' });
+  assert.match((await f.run(preview.confirmation)).text, /changed since approval/);
+});

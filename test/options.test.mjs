@@ -46,3 +46,9 @@ test('start is the default: a bare command, flags and a pull request reference a
   assert.equal(parseCommand('stop').action, 'stop');
   assert.throws(() => parseCommand('statuss'), /Unknown argument: statuss/);
 });
+
+test('a branch base keeps its full name in the scope label; only commit ids are shortened', async () => {
+  const { describeScope } = await import('../src/scope.mjs');
+  assert.match(describeScope({ base: 'feature/login' }), /against feature\/login$/);
+  assert.match(describeScope({ base: 'main' }, 'a'.repeat(40)), /against aaaaaaa$/);
+});
