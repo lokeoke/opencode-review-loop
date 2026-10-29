@@ -12,6 +12,9 @@ const MAX_SOURCE_BYTES = 64 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 15_000;
 const MAX_SOURCE_FILE_BYTES = 512 * 1024;
 const MAX_SOURCE_RESPONSE_BYTES = 32 * 1024;
+const MAX_REVIEW_FILES = 300;
+const MAX_DIFF_LINE_CHARS = 4000;
+export const END_OF_DIFF = '(end of diff)';
 export const sensitivePath = (file) => /(^|\/)(\.env($|\.)|\.git($|\/)|id_(rsa|ed25519)$)|\.(pem|key|p12|pfx)$/i.test(file);
 
 async function git(cwd, args) {
@@ -132,13 +135,42 @@ export class GitScope {
     return output.join('\n') || '[No matching source lines.]';
   }
 
+  // Changed paths in the review scope, and the subset that is untracked (so absent from `git diff`).
+  async changedPaths() {
+    const added = paths(await git(this.root, ['ls-files', '--others', '--exclude-standard', '-z'])).sort();
+    const changed = paths(await git(this.root, ['diff', '--name-only', '--no-renames', '-z', this.baseSha, '--']));
+    return { added, files: [...new Set([...changed, ...added])].sort() };
+  }
+
+  // One changed file's diff, paged by diff line, for changes too large to embed. `complete` means the end was returned.
+  async fileDiff({ path, offset = 1, limit = 150 }) {
+    if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error('Invalid diff pagination.');
+    const { added, files } = await this.changedPaths();
+    if (typeof path !== 'string' || !files.includes(path)) throw new Error('Path is not a changed file in this review.');
+    let text;
+    if (added.includes(path)) {
+      if (!await this.contains(join(this.root, path))) throw new Error('Path is not a changed file in this review.');
+      text = `New file ${JSON.stringify(path)}:\n${await readFile(join(this.root, path), 'utf8')}`;
+    } else text = await git(this.root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', this.baseSha, '--', path]);
+    const lines = text.split('\n');
+    const page = [];
+    let bytes = 0, index = offset - 1;
+    for (; index < lines.length && page.length < limit; index++) {
+      const line = lines[index].slice(0, MAX_DIFF_LINE_CHARS);
+      bytes += Buffer.byteLength(line);
+      if (page.length && bytes > MAX_SOURCE_RESPONSE_BYTES) break;
+      page.push(line);
+    }
+    const complete = index >= lines.length;
+    return { complete, text: page.join('\n') + (complete ? `\n${END_OF_DIFF}` : `\n[More diff available; continue at offset ${index + 1}.]`) };
+  }
+
   async snapshot() {
     const head = (await git(this.root, ['rev-parse', 'HEAD'])).trim();
     const branch = await branchName(this.root);
     if (head !== this.head || branch !== this.branch) throw new Error('Branch or HEAD changed; start a new run.');
-    const added = paths(await git(this.root, ['ls-files', '--others', '--exclude-standard', '-z']));
-    const changed = paths(await git(this.root, ['diff', '--name-only', '--no-renames', '-z', this.baseSha, '--']));
-    const files = [...new Set([...changed, ...added])].sort();
+    const { added, files } = await this.changedPaths();
+    if (files.length > MAX_REVIEW_FILES) throw new Error(`The change touches more than ${MAX_REVIEW_FILES} files; split it into smaller reviews.`);
     // The encoded --binary fingerprint below is against HEAD; reject binary changes before buffering it.
     const stats = paths(await git(this.root, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv', '--no-renames', 'HEAD', '--']));
     if (stats.some((entry) => entry.startsWith('-\t-\t'))) throw new Error('Binary changes need manual review; no binary diff was buffered.');
@@ -182,7 +214,7 @@ export class GitScope {
       if (content.includes('\0')) throw new Error('Binary new files need manual review.');
       diff += `\nNew file ${JSON.stringify(file)}:\n${content}\n`;
     }
-    if (Buffer.byteLength(diff) > MAX_REVIEW_BYTES) throw new Error('Diff exceeds the supported review budget; split the change.');
-    return { fingerprint: hash.digest('hex'), files, diff, index };
+    const oversized = Buffer.byteLength(diff) > MAX_REVIEW_BYTES;
+    return { fingerprint: hash.digest('hex'), files, diff: oversized ? undefined : diff, oversized, index };
   }
 }

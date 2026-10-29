@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 const SOURCE_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['operation'],
   properties: {
-    operation: { type: 'string', enum: ['list', 'read', 'search'] },
+    operation: { type: 'string', enum: ['list', 'read', 'search', 'diff'] },
     path: { type: 'string', maxLength: 1000 },
     query: { type: 'string', maxLength: 200 },
     offset: { type: 'integer', minimum: 1 },
@@ -33,7 +33,7 @@ export function createPlugin(dependencies = {}) {
       await installGuards(ctx, engine);
       await ctx.tool.transform((editor) => {
         for (const [name, description, schema, handle] of [
-          ['review_loop_source', 'Read/list/search worktree-relative source. Literal search; paginate with offset/limit. No edits or shell.', SOURCE_SCHEMA, (sessionID, input) => engine.source(sessionID, input)],
+          ['review_loop_source', 'Read/list/search worktree-relative source, or page one changed file\'s diff (operation diff). Literal search; paginate with offset/limit. No edits or shell.', SOURCE_SCHEMA, (sessionID, input) => engine.source(sessionID, input)],
           ['review_loop_submit_review', 'Submit one structured review for the active run and round, then finish immediately.', REVIEW_SCHEMA, (sessionID, input) => engine.submitReview(sessionID, input)],
           ['review_loop_submit_fix', 'Submit a fix summary and disputed finding IDs, then finish immediately.', FIX_SCHEMA, (sessionID, input) => engine.submitFix(sessionID, input)],
         ]) {

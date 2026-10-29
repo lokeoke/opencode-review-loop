@@ -134,3 +134,50 @@ test('uncommitted lists tracked edits and new files but not committed work', asy
   await writeFile(join(root, 'new.js'), 'x');
   assert.deepEqual(await scope.uncommitted(), ['a.js', 'new.js']);
 });
+
+async function oversizedFixture(t, files = 2) {
+  const root = await mkdtemp(join(tmpdir(), 'opencode-review-loop-large-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+  git('init', '-b', 'main');
+  await writeFile(join(root, 'seed.txt'), 'x');
+  git('add', '.');
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'Initial');
+  for (let i = 0; i < files; i++) await writeFile(join(root, `big${i}.js`), Array.from({ length: 6000 }, (_, n) => `export const v${n} = ${n};`).join('\n') + '\n');
+  return root;
+}
+
+test('an oversized diff is not embedded; the snapshot says to read it per file', async (t) => {
+  const scope = await GitScope.open(await oversizedFixture(t), 'HEAD');
+  const snapshot = await scope.snapshot();
+  assert.equal(snapshot.oversized, true);
+  assert.equal(snapshot.diff, undefined);
+  assert.deepEqual(snapshot.files, ['big0.js', 'big1.js']);
+});
+
+test('a small diff is still embedded whole', async (t) => {
+  const root = await oversizedFixture(t, 0);
+  await writeFile(join(root, 'seed.txt'), 'y');
+  const snapshot = await (await GitScope.open(root, 'HEAD')).snapshot();
+  assert.equal(snapshot.oversized, false);
+  assert.match(snapshot.diff, /\+y/);
+});
+
+test('a single file diff pages to the end and reports completion; unchanged paths are refused', async (t) => {
+  const root = await oversizedFixture(t);
+  const scope = await GitScope.open(root, 'HEAD');
+  const first = await scope.fileDiff({ path: 'big0.js', offset: 1, limit: 100 });
+  assert.equal(first.complete, false);
+  assert.match(first.text, /v0 = 0/);
+  let page = first, offset = 101;
+  while (!page.complete) { page = await scope.fileDiff({ path: 'big0.js', offset, limit: 200 }); offset += 200; }
+  assert.match(page.text, /v5999 = 5999/);
+  await assert.rejects(scope.fileDiff({ path: 'seed.txt', offset: 1, limit: 10 }), /not a changed file/);
+  await assert.rejects(scope.fileDiff({ path: '../x', offset: 1, limit: 10 }), /not a changed file/);
+});
+
+test('a change touching more files than the review can track fails closed', async (t) => {
+  const root = await oversizedFixture(t, 2);
+  for (let i = 0; i < 300; i++) await writeFile(join(root, `f${i}.js`), `${i}\n`.repeat(1000));
+  await assert.rejects((await GitScope.open(root, 'HEAD')).snapshot(), /more than 300 files.*split/i);
+});

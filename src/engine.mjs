@@ -137,6 +137,7 @@ export class Engine {
         if (checked.fingerprint !== before.fingerprint || checked.index !== before.index) throw new Error('Verification changed source or the Git index.');
         run.checked(checked.fingerprint);
         active.changedFiles = new Set(checked.files);
+        active.unreadDiffs = checked.oversized ? new Set(checked.files) : new Set();
         if (run.terminal) break;
         await active.lease.save(run.state);
         if (!active.reviewerID) {
@@ -255,6 +256,10 @@ export class Engine {
         if ((await active.scope.source({ operation: 'read', path, offset: line, limit: 1 })).startsWith('[No matching')) throw new Error(`Evidence line ${path}:${line} does not exist.`);
       }
     }
+    if (input.complete && active.unreadDiffs.size) {
+      const shown = [...active.unreadDiffs].slice(0, 10).join(', ');
+      throw new Error(`Complete review refused: the diffs of ${active.unreadDiffs.size} changed file(s) were not read to the end (${shown}${active.unreadDiffs.size > 10 ? ', …' : ''}). Read each with review_loop_source operation "diff", or submit complete=false.`);
+    }
     active.run.submitReview(input, { validated: true });
     await active.lease.save(active.run.state);
   }
@@ -270,6 +275,11 @@ export class Engine {
     const active = this.activeFor(sessionID);
     if (!active || active.turnSessionID !== sessionID || active.run.terminal || (sessionID === active.reviewerID ? active.run.state.phase !== 'reviewing' || active.run.state.submission : active.run.state.phase !== 'fixing' || active.run.state.fix)) throw new Error('Source access is not available in this phase.');
     await this.assertSession(active, sessionID);
+    if (input.operation === 'diff') {
+      const page = await active.scope.fileDiff(input);
+      if (page.complete) active.unreadDiffs.delete(input.path);
+      return page.text;
+    }
     return active.scope.source(input);
   }
 
