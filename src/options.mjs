@@ -1,0 +1,62 @@
+export const COPILOT = 'github-copilot';
+const PREFERENCES = ['claude-sonnet-5.5', 'gpt-6.1-sol', 'gemini-4-argon'];
+
+function tokenize(input) {
+  const tokens = [];
+  let token = '', quote, escaped = false, started = false;
+  for (const char of input.trim()) {
+    if (escaped) { token += char; escaped = false; started = true; }
+    else if (char === '\\' && quote !== "'") { escaped = true; started = true; }
+    else if (quote) { if (char === quote) quote = undefined; else token += char; }
+    else if (char === '"' || char === "'") { quote = char; started = true; }
+    else if (/\s/.test(char)) { if (started) tokens.push(token); token = ''; started = false; }
+    else { token += char; started = true; }
+  }
+  if (quote || escaped) throw new Error('Unclosed quote or escape in arguments.');
+  if (started) tokens.push(token);
+  return tokens;
+}
+
+export function parseCommand(input = '') {
+  const [action = 'status', ...args] = tokenize(input);
+  if (!['start', 'status', 'stop'].includes(action)) throw new Error('Use start, status, or stop.');
+  if (action !== 'start') {
+    if (args.length) throw new Error(`${action} takes no arguments.`);
+    return { action };
+  }
+  const result = { action, base: 'main', checks: [], allowSameFamily: false };
+  const seen = new Set();
+  for (let i = 0; i < args.length; i++) {
+    const key = args[i];
+    if (key === '--allow-same-family') { result.allowSameFamily = true; continue; }
+    if (!['--base', '--goal', '--check', '--reviewer'].includes(key)) throw new Error(`Unknown option: ${key}`);
+    if (key !== '--check' && seen.has(key)) throw new Error(`Duplicate option: ${key}`);
+    seen.add(key);
+    const value = args[++i];
+    if (!value?.trim() || value.startsWith('--') || value.includes('\0') || value.length > 8000) throw new Error(`Missing or invalid value for ${key}.`);
+    if (key === '--check') result.checks.push(value);
+    else result[key.slice(2)] = value;
+  }
+  if (!result.checks.length || result.checks.length > 10) throw new Error('Provide 1–10 explicit --check commands.');
+  if (!result.goal) throw new Error('Provide the task requirements with --goal.');
+  if (result.base.startsWith('-')) throw new Error('Base cannot be an option.');
+  return result;
+}
+
+export function lineage(id) {
+  if (/^(gpt|o[0-9])/.test(id)) return 'openai';
+  if (/^claude/.test(id)) return 'anthropic';
+  if (/^gemini/.test(id)) return 'google';
+  return undefined;
+}
+
+export function selectReviewer(models, fixer, options = {}) {
+  const available = models.filter((model) => model.providerID === COPILOT && model.enabled !== false && model.status !== 'deprecated' && model.capabilities?.tools);
+  const references = options.reviewer ? [options.reviewer.replace(`${COPILOT}/`, '')] : PREFERENCES;
+  if (options.reviewer?.includes('/') && !options.reviewer.startsWith(`${COPILOT}/`)) throw new Error('Reviewer must use GitHub Copilot.');
+  const candidates = references.map((id) => available.find((model) => model.id === id)).filter(Boolean);
+  const selected = candidates.find((model) => lineage(model.id) && lineage(fixer.id) && lineage(model.id) !== lineage(fixer.id))
+    ?? (options.allowSameFamily ? candidates[0] : undefined);
+  if (!selected) throw new Error('No approved different-lineage Copilot reviewer available. Select --reviewer or explicitly --allow-same-family.');
+  return { providerID: selected.providerID, id: selected.id };
+}
