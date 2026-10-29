@@ -9,6 +9,10 @@ import { fixPrompt, reviewPrompt } from './prompts.mjs';
 
 export const PHASE_TIMEOUT_MS = 10 * 60_000;
 export const RUN_TIMEOUT_MS = 45 * 60_000;
+const CONTROL_TIMEOUT_MS = 15_000;
+// Locations load separate plugin instances; session guards must follow a moved session.
+const ACTIVE_RUNS = Symbol.for('opencode-review-loop.active.v1');
+globalThis[ACTIVE_RUNS] ??= new Map();
 
 function sameModel(a, b) { return a?.providerID === b?.providerID && a?.id === b?.id && (a?.variant ?? 'default') === (b?.variant ?? 'default'); }
 
@@ -16,7 +20,7 @@ export class Engine {
   constructor(ctx, { stateDirectory } = {}) {
     this.ctx = ctx;
     this.store = new RunStore(stateDirectory);
-    this.active = new Map();
+    this.active = globalThis[ACTIVE_RUNS];
     this.disposed = false;
   }
 
@@ -34,6 +38,7 @@ export class Engine {
 
   async start(sessionID, options) {
     if (this.disposed) throw new Error('Review-loop plugin is unloading.');
+    if (this.activeFor(sessionID)) throw new Error('An active run already owns this fixer session.');
     const fixer = await this.ctx.session.get({ sessionID });
     if (fixer.agent !== 'build') throw new Error('Switch to the Build agent before starting a review loop.');
     if (!fixer.model) throw new Error('The fixer session must have an explicit selected model.');
@@ -43,7 +48,7 @@ export class Engine {
     const id = randomUUID();
     const lease = await this.store.acquire(scope.root, id);
     const run = new Run({ id });
-    const active = { run, scope, lease, fixerID: sessionID, fixerModel: fixer.model, fixerAgent: fixer.agent, reviewerModel, checks: options.checks, goal: options.goal, abort: new AbortController() };
+    const active = { owner: this, run, scope, lease, fixerID: sessionID, fixerModel: fixer.model, fixerAgent: fixer.agent, reviewerModel, checks: options.checks, goal: options.goal, abort: new AbortController() };
     this.active.set(id, active);
     run.state.worktree = scope.root;
     run.state.directory = scope.cwd;
@@ -51,6 +56,8 @@ export class Engine {
     run.state.fixerID = sessionID;
     run.state.fixerModel = fixer.model;
     run.state.reviewerModel = reviewerModel;
+    run.state.goal = options.goal;
+    run.state.approvedChecks = options.checks;
     run.state.checks = [];
     try { await lease.save(run.state); }
     catch (error) { this.active.delete(id); await lease.release(); throw error; }
@@ -60,9 +67,14 @@ export class Engine {
 
   async execute(active) {
     const { run, scope, abort } = active;
-    const timer = setTimeout(() => { void this.stop(active.fixerID, 'Overall deadline reached.'); }, RUN_TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      void this.stop(active.fixerID, 'Overall deadline reached.').catch(() => {
+        console.error(`[review-loop] Cancellation unconfirmed for run ${run.state.id}; its worktree remains locked.`);
+      });
+    }, RUN_TIMEOUT_MS);
     try {
       await this.ctx.session.wait({ sessionID: active.fixerID }, { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(PHASE_TIMEOUT_MS)]) });
+      await this.assertSession(active, active.fixerID);
       active.initial = await scope.snapshot();
       if (!active.initial.files.length) throw new Error('No changes against the selected base.');
       while (!run.terminal) {
@@ -70,13 +82,18 @@ export class Engine {
         const before = await scope.snapshot();
         if (before.index !== active.initial.index) throw new Error('The Git index changed; automatic staging is not allowed.');
         const checks = [];
+        run.state.checks.push({ fingerprint: before.fingerprint, results: checks });
         for (const command of active.checks) {
           this.ensureRunning(active);
-          checks.push(await runCheck(command, scope.cwd, { signal: abort.signal }));
+          try { checks.push(await runCheck(command, scope.cwd, { signal: abort.signal })); }
+          catch (error) {
+            checks.push({ command, exitCode: error.exitCode ?? null, exitSignal: error.exitSignal ?? null, durationMs: error.durationMs ?? null, error: error.message });
+            throw error;
+          }
         }
         const checked = await scope.snapshot();
+        await this.assertSession(active, active.fixerID);
         if (checked.fingerprint !== before.fingerprint || checked.index !== before.index) throw new Error('Verification changed source or the Git index.');
-        run.state.checks.push({ fingerprint: checked.fingerprint, results: checks });
         run.checked(checked.fingerprint);
         if (run.terminal) break;
         await active.lease.save(run.state);
@@ -98,6 +115,7 @@ export class Engine {
         }
         await this.turn(active, active.reviewerID, reviewPrompt(active, checked), 'reviewer');
         const reviewed = await scope.snapshot();
+        await this.assertSession(active, active.fixerID);
         if (reviewed.index !== active.initial.index) throw new Error('Git index changed during review.');
         run.reviewCompleted(reviewed.fingerprint);
         await active.lease.save(run.state);
@@ -111,13 +129,14 @@ export class Engine {
       run.stop(error.message || 'Review loop failed.');
     } finally {
       clearTimeout(timer);
+      active.finished = true;
       try {
         await active.lease.save(run.state);
-        await active.lease.release();
+        if (!active.pendingInterruptID) await active.lease.release();
       } catch (error) {
         active.persistenceError = error.message;
       }
-      this.active.delete(run.state.id);
+      if (!active.pendingInterruptID) this.active.delete(run.state.id);
       try { await this.ctx.session.synthetic({ sessionID: active.fixerID, text: this.describe(active), resume: false }); }
       catch (error) { console.error(`[review-loop] Unable to report run ${run.state.id}: ${error.message}`); }
     }
@@ -133,7 +152,7 @@ export class Engine {
   }
 
   async assertSession(active, sessionID) {
-    const session = await this.ctx.session.get({ sessionID });
+    const session = await this.ctx.session.get({ sessionID }, { signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS) });
     if (await realpath(session.location.directory) !== active.scope.cwd) throw new Error('Session location changed.');
     const reviewer = sessionID === active.reviewerID;
     if (!sameModel(session.model, reviewer ? active.reviewerModel : active.fixerModel) || session.agent !== (reviewer ? 'general' : active.fixerAgent)) throw new Error('Session agent or model changed.');
@@ -143,20 +162,20 @@ export class Engine {
   async turn(active, sessionID, text, role) {
     this.ensureRunning(active);
     await this.assertSession(active, sessionID);
-    const before = await this.ctx.session.context({ sessionID });
     const signal = AbortSignal.any([active.abort.signal, AbortSignal.timeout(PHASE_TIMEOUT_MS)]);
+    const before = await this.ctx.session.context({ sessionID }, { signal });
     active.turnSessionID = sessionID;
     try {
-      await this.ctx.session.prompt({ sessionID, text, metadata: { reviewLoop: { id: active.run.state.id, round: active.run.state.round, role } }, delivery: 'queue' });
+      await this.ctx.session.prompt({ sessionID, text, metadata: { reviewLoop: { id: active.run.state.id, round: active.run.state.round, role } }, delivery: 'queue' }, { signal });
       await this.ctx.session.wait({ sessionID }, { signal });
       this.ensureRunning(active);
       const session = await this.assertSession(active, sessionID);
       if (session.outcome !== 'succeeded') throw new Error(`${role} turn did not succeed.`);
       const old = new Set(before.map((message) => message.id));
-      const messages = (await this.ctx.session.context({ sessionID })).filter((message) => !old.has(message.id));
+      const messages = (await this.ctx.session.context({ sessionID }, { signal })).filter((message) => !old.has(message.id));
       if (messages.some((message) => message.error || (message.type === 'assistant' && ['length', 'content-filter', 'error', 'unknown'].includes(message.finish)) || message.content?.some((part) => part.state?.status === 'error'))) throw new Error(`${role} turn had an incomplete result or tool error.`);
     } catch (error) {
-      await this.ctx.session.interrupt({ sessionID, resume: false });
+      await this.interrupt(active, sessionID);
       throw error;
     } finally { active.turnSessionID = undefined; }
   }
@@ -195,12 +214,26 @@ export class Engine {
     if (!active) return;
     active.run.stop(reason);
     active.abort.abort();
-    if (active.turnSessionID) await this.ctx.session.interrupt({ sessionID: active.turnSessionID, resume: false });
+    const target = active.pendingInterruptID ?? active.turnSessionID;
+    if (target) await this.interrupt(active, target);
+    if (active.finished && !active.pendingInterruptID) {
+      await active.lease.save(active.run.state);
+      await active.lease.release();
+      this.active.delete(active.run.state.id);
+    }
+  }
+
+  async interrupt(active, sessionID) {
+    active.pendingInterruptID = sessionID;
+    active.run.state.pendingInterruptID = sessionID;
+    await this.ctx.session.interrupt({ sessionID, resume: false }, { signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS) });
+    active.pendingInterruptID = undefined;
+    active.run.state.pendingInterruptID = undefined;
   }
 
   async dispose() {
     this.disposed = true;
-    await Promise.all([...this.active.values()].map(async (active) => {
+    await Promise.all([...this.active.values()].filter((active) => active.owner === this).map(async (active) => {
       await this.stop(active.fixerID, 'Plugin unloaded; no automatic continuation.');
       await active.done;
     }));

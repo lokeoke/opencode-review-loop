@@ -22,7 +22,12 @@ export async function installGuards(ctx, engine) {
     if (!active) return;
     const allowed = allowedTools(active, event.sessionID);
     if ([SOURCE, REVIEW, FIX].includes(event.action) && allowed.includes(event.action)) return;
-    if (event.action === 'edit' && allowed.includes('patch') && event.resources.length && (await Promise.all(event.resources.map((path) => active.scope.contains(path)))).every(Boolean)) return;
+    if (event.action === 'edit' && allowed.includes('patch')) {
+      try {
+        await engine.assertSession(active, event.sessionID);
+        if (event.resources.length && (await Promise.all(event.resources.map((path) => active.scope.canEdit(path)))).every(Boolean)) return;
+      } catch { /* Deny when the session moved or its identity cannot be verified. */ }
+    }
     event.effect = 'deny';
     event.message = 'This action is outside the active review-loop phase and trust boundary.';
   });

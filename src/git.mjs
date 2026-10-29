@@ -51,6 +51,14 @@ export class GitScope {
     }
   }
 
+  async canEdit(path) {
+    if (!await this.contains(path)) return false;
+    const file = relative(this.root, resolve(this.cwd, path)).split(sep).join('/');
+    if (/(^|\/)(AGENTS\.md|CLAUDE\.md|\.opencode|\.claude|\.cursor|\.agents|node_modules|\.gitignore|\.gitattributes)($|\/)/i.test(file)) return false;
+    try { await git(this.root, ['check-ignore', '--quiet', '--', file]); return false; }
+    catch (error) { if (error.code === 1) return true; throw error; }
+  }
+
   async source({ operation, path = '', query = '', offset = 1, limit = 150 }) {
     if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error('Invalid source pagination.');
     const files = [...new Set(paths(await git(this.root, ['ls-files', '--cached', '--others', '--exclude-standard', '-z'])))].filter((file) => !sensitivePath(file)).sort();
@@ -116,9 +124,12 @@ export class GitScope {
         hash.update(String(stat.mode));
         if (stat.isSymbolicLink()) hash.update(await readlink(join(this.root, file)));
         else if (stat.isFile()) {
+          const canonical = await realpath(join(this.root, file));
+          const rel = relative(this.root, canonical);
+          if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('Tracked source path escapes the worktree.');
           bytes += stat.size;
           if (bytes > MAX_SOURCE_BYTES) throw new Error('Source exceeds the supported fingerprint budget.');
-          hash.update(await readFile(join(this.root, file)));
+          hash.update(`${stat.size}\0`).update(await readFile(canonical));
         } else throw new Error(`Tracked non-file/submodule is unsupported: ${file}`);
       } catch (error) { if (error.code === 'ENOENT') hash.update('deleted'); else throw error; }
       hash.update('\0');

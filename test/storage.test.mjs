@@ -17,6 +17,12 @@ test('worktree claims are exclusive, durable, and isolated across projects', asy
   assert.equal(await a.read('/projects/b'), undefined);
   await lease.release();
   const next = await b.acquire('/projects/a', 'run-next');
+  await Promise.all([
+    next.save({ id: 'run-next', phase: 'reviewing' }),
+    next.save({ id: 'run-next', phase: 'stopped' }),
+  ]);
+  assert.equal((await a.read('/projects/a')).phase, 'stopped');
+  assert.equal((await a.read('/projects/a', 'run-a')).phase, 'reviewing');
   await next.release();
   await other.release();
 });

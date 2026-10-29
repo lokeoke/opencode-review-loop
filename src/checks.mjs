@@ -33,8 +33,7 @@ export function runCheck(command, cwd, { signal, timeoutMs = CHECK_TIMEOUT_MS } 
       // Kill descendants that survived the shell, including background jobs.
       kill('SIGKILL');
       clearTimeout(killTimer);
-      if (failure) reject(new Error(failure));
-      else if (code !== 0) reject(new Error(`Check failed with exit ${code ?? exitSignal}: ${command}`));
+      if (failure || code !== 0) reject(Object.assign(new Error(failure || `Check failed with exit ${code ?? exitSignal}: ${command}`), { command, exitCode: code, exitSignal, durationMs: Date.now() - started }));
       else resolve({ command, exitCode: 0, durationMs: Date.now() - started });
     });
   });

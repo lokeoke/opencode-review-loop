@@ -61,6 +61,7 @@ export class Run {
   fixCompleted() {
     this.requirePhase('fixing');
     if (!this.state.fix || this.state.fix.disputed.length) return this.stop('Fix missing or findings disputed; human decision needed.');
+    this.state.history.at(-1).fix = this.state.fix;
     this.state.phase = 'checking';
   }
 

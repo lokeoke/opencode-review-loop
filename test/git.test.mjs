@@ -29,6 +29,10 @@ test('a pinned scope includes staged, unstaged, and new files without modifying 
   assert.match(await scope.source({ operation: 'search', query: 'added' }), /new.js:1/);
   await assert.rejects(scope.source({ operation: 'read', path: '../outside' }), /path|source/i);
   await assert.rejects(scope.source({ operation: 'read', path: '.git/config' }), /path|source/i);
+  assert.equal(await scope.canEdit('app.js'), true);
+  assert.equal(await scope.canEdit('AGENTS.md'), false);
+  assert.equal(await scope.canEdit('.opencode/plugins/escape.js'), false);
+  assert.equal(await scope.canEdit('.git/config'), false);
   assert.equal(git('diff', '--cached'), staged);
   await writeFile(join(root, 'new.js'), 'export const added = false;\n');
   assert.notEqual((await scope.snapshot()).fingerprint, before.fingerprint);

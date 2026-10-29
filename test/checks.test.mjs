@@ -4,7 +4,7 @@ import { runCheck } from '../src/checks.mjs';
 
 test('verification records actual success and rejects nonzero exits', async () => {
   assert.equal((await runCheck('exit 0', process.cwd())).exitCode, 0);
-  await assert.rejects(runCheck('exit 7', process.cwd()), /exit 7/);
+  await assert.rejects(runCheck('exit 7', process.cwd()), (error) => error.exitCode === 7 && /exit 7/.test(error.message));
 });
 
 test('verification has bounded execution and supports cancellation', async () => {

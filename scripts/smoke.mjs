@@ -32,12 +32,12 @@ await writeFile(join(directory, 'access.mjs'), 'export function canDelete(userId
 const session = api('post', '/api/session', { title: 'Review-loop live smoke', agent: 'build', model: { providerID: 'github-copilot', id: 'gpt-6.1-sol' }, location: { directory } });
 console.log(`Smoke fixture: ${directory}\nFixer session: ${session.id}`);
 const command = (text) => api('post', `/api/session/${session.id}/command`, { name: 'review-loop', text });
-command('start --base main --goal "Implement deletion authorization: only a nonempty authenticated user ID equal to the owner ID may delete. Anonymous users must always be rejected." --check "node access.test.mjs"');
 const deadline = Date.now() + 8 * 60_000;
 const store = new RunStore();
 const worktree = await realpath(directory);
 let lastPhase;
 try {
+  command('start --base main --goal "Implement deletion authorization: only a nonempty authenticated user ID equal to the owner ID may delete. Anonymous users must always be rejected." --check "node access.test.mjs"');
   while (Date.now() < deadline) {
     await delay(2000);
     const state = await store.read(worktree);
