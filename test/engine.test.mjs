@@ -385,3 +385,22 @@ test('an oversized change cannot pass until every changed file diff was read to 
   assert.doesNotMatch(prompt, /v5999/);
   assert.equal((await f.engine.status('fixer')).phase, 'passed');
 });
+
+test('diff coverage counts only contiguous pages from the start, and offsets past the end prove nothing', async (t) => {
+  const f = await fixture(t);
+  for (const name of ['big0.js', 'big1.js']) await writeFile(join(f.directory, name), Array.from({ length: 6000 }, (_, n) => `export const v${n} = ${n};`).join('\n') + '\n');
+  let refusal;
+  f.setPrompt(async () => {
+    const { id: runId } = f.engine.activeFor('fixer').run.state;
+    const review = { runId, round: 1, complete: true, issues: [], resolutions: [] };
+    const read = (path, offset) => f.engine.source('reviewer', { operation: 'diff', path, offset, limit: 200 });
+    await assert.rejects(read('big0.js', 1_000_000_000), /beyond the end/);
+    for (let offset = 1; offset < 20_000; offset += 200) { const text = await read('big1.js', offset).catch(() => ''); if (text.endsWith('(end of diff)')) break; if (offset > 1 && offset < 400) continue; }
+    await assert.rejects(f.engine.submitReview('reviewer', review), (error) => { refusal = error.message; return true; });
+    for (const path of ['big0.js', 'big1.js', 'app.js']) for (let offset = 1; ; offset += 200) if ((await read(path, offset)).endsWith('(end of diff)')) break;
+    await f.engine.submitReview('reviewer', review);
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  assert.match(refusal, /big0\.js/);
+  assert.equal((await f.engine.status('fixer')).phase, 'passed');
+});

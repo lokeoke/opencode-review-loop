@@ -152,17 +152,23 @@ export class GitScope {
       if (!await this.contains(join(this.root, path))) throw new Error('Path is not a changed file in this review.');
       text = `New file ${JSON.stringify(path)}:\n${await readFile(join(this.root, path), 'utf8')}`;
     } else text = await git(this.root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', this.baseSha, '--', path]);
-    const lines = text.split('\n');
+    // Long lines are delivered in full as consecutive chunks, so reaching the end always means everything was returned.
+    const lines = text.split('\n').flatMap((line) => {
+      const chunks = [];
+      for (let start = 0; start < line.length; start += MAX_DIFF_LINE_CHARS) chunks.push(line.slice(start, start + MAX_DIFF_LINE_CHARS));
+      return chunks.length ? chunks : [''];
+    });
+    if (offset > lines.length) throw new Error(`Offset ${offset} is beyond the end of this diff (${lines.length} lines).`);
     const page = [];
     let bytes = 0, index = offset - 1;
     for (; index < lines.length && page.length < limit; index++) {
-      const line = lines[index].slice(0, MAX_DIFF_LINE_CHARS);
+      const line = lines[index];
       bytes += Buffer.byteLength(line);
       if (page.length && bytes > MAX_SOURCE_RESPONSE_BYTES) break;
       page.push(line);
     }
     const complete = index >= lines.length;
-    return { complete, text: page.join('\n') + (complete ? `\n${END_OF_DIFF}` : `\n[More diff available; continue at offset ${index + 1}.]`) };
+    return { complete, next: index + 1, text: page.join('\n') + (complete ? `\n${END_OF_DIFF}` : `\n[More diff available; continue at offset ${index + 1}.]`) };
   }
 
   async snapshot() {

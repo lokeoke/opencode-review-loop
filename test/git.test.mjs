@@ -181,3 +181,12 @@ test('a change touching more files than the review can track fails closed', asyn
   for (let i = 0; i < 300; i++) await writeFile(join(root, `f${i}.js`), `${i}\n`.repeat(1000));
   await assert.rejects((await GitScope.open(root, 'HEAD')).snapshot(), /more than 300 files.*split/i);
 });
+
+test('a single very long changed line is delivered in full across pages', async (t) => {
+  const root = await oversizedFixture(t, 0);
+  await writeFile(join(root, 'min.js'), `${'a'.repeat(10_000)}TAIL\n`);
+  const scope = await GitScope.open(root, 'HEAD');
+  let text = '', page, offset = 1;
+  do { page = await scope.fileDiff({ path: 'min.js', offset, limit: 200 }); text += page.text; offset = page.next; } while (!page.complete);
+  assert.ok(text.includes('TAIL'));
+});

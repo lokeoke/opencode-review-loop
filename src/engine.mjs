@@ -138,6 +138,7 @@ export class Engine {
         run.checked(checked.fingerprint);
         active.changedFiles = new Set(checked.files);
         active.unreadDiffs = checked.oversized ? new Set(checked.files) : new Set();
+        active.diffCursor = new Map();
         if (run.terminal) break;
         await active.lease.save(run.state);
         if (!active.reviewerID) {
@@ -277,7 +278,11 @@ export class Engine {
     await this.assertSession(active, sessionID);
     if (input.operation === 'diff') {
       const page = await active.scope.fileDiff(input);
-      if (page.complete) active.unreadDiffs.delete(input.path);
+      // Coverage only advances when a page starts exactly where the previous one ended, so skipped pages never count.
+      if (input.offset === undefined || input.offset === 1 || input.offset === active.diffCursor.get(input.path)) {
+        active.diffCursor.set(input.path, page.next);
+        if (page.complete) active.unreadDiffs.delete(input.path);
+      }
       return page.text;
     }
     return active.scope.source(input);
