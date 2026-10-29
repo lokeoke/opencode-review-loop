@@ -25,7 +25,7 @@ Regression coverage now includes permission API allow/ask/deny/missing behavior,
 
 ## Latest proof
 
-- 48 deterministic tests passed, including native-adapter output, script-definition approval, launch-definition mutation guards, unchanged-file causal findings, cached-process signalling refusal, bounded progress and large-binary diagnostics.
+- 52 deterministic tests passed, including native-adapter output, script-definition approval, launch-definition mutation guards, unchanged-file causal findings, cached-process signalling refusal, bounded progress and large-binary diagnostics.
 - Syntax checks and whitespace checks passed.
 - Goal-free live smoke passed in two reviews on the existing authenticated 2.2.0 service: the reviewer found anonymous deletion, the original GPT fixer repaired it, checks passed, and the same Claude reviewer cleared it.
 - The service advertises the installed `review-loop` package's server, TUI and GUI parts as active. This proves discovery, not visual rendering in every client/version; no screenshot-based visual claim is made.

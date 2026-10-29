@@ -10,6 +10,6 @@ Runtime loss never reconstructs executable work. Instead of leaving users with o
 
 Cancellation applies to reviewer creation as well as running turns/checks. A late returned session must be interrupted before scheduling work. Startup rechecks disposal after asynchronous acquisition. Failed interruption/signalling retains ownership and reports unconfirmed cleanup; it is not success.
 
-Numeric process-group IDs are not durable identities. After check cleanup becomes unconfirmed, stop never re-signals the stored number, because the group may have been reused. The retained claim requires explicit investigation/recovery instead of a potentially destructive automatic retry.
+Numeric process-group IDs are not durable identities. After check cleanup becomes unconfirmed, stop never re-signals the stored number, because the group may have been reused. The run ends, the fixer session is released, and the claim is retained and re-labelled with the check process's PID so explicit recovery refuses a live process and accepts a dead one. This avoids both a potentially destructive automatic retry and a session that stays locked until the host restarts.
 
 This is deliberately less convenient than automatic lock stealing, but recovery is available without pretending process liveness can be inferred perfectly.

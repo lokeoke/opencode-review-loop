@@ -36,4 +36,17 @@ The live runner also no longer invokes a differently versioned CLI: it pins the 
 | 8. Repeated ancestor lstat | Retained deliberately. A cached safety result can become stale between file opens; each file still gets ancestor verification. No measured bottleneck justified weakening that protection. Search/read budgets remain bounded; optimization needs profiling plus a safe filesystem strategy. |
 | 9. Confirmation repeats discovery | Fixed: confirmation uses scope inspection and raw control-file integrity only. A now-malformed manifest causes an explicit scope-change refusal, not a discovery parser error. The existing approval regression covers this case. |
 
-The updated deterministic suite has 48 passing tests. These dispositions do not automatically resolve external review threads or substitute for reviewer verification.
+## Second follow-up (commits 68c96e8, d5231e6, 55977b4)
+
+| Finding | Disposition |
+| --- | --- |
+| 1. Stuck session after cleanup failure | Fixed: the run is released from the active set and the fixer regains its tools. The claim is retained and its recorded PID replaced with the check process's, so explicit recovery works after that process exits and is refused while it lives. `stop()` no longer throws. Regression: no re-signal, session released, restart blocked by the claim. |
+| 2. Final report lost with RPC | Fixed: the transcript copy is always written; RPC is additive. Regression covers an RPC channel with no subscriber. |
+| 3. Control-file edits fail the run | Fixed: the fixer prompt lists the protected controls and instructs a disputed finding instead. |
+| 4. Incomplete control list | Extended (GNUmakefile, conftest.py, setup.py, noxfile.py, Jest/Vitest/ESLint/Babel/Playwright/TS configs, pom.xml, build.gradle, go.mod). The asymmetry is deliberate: edit protection is repo-wide by name, the fingerprint covers the check directory up to the root. Still a named list, not all transitive code. |
+| 5. Weak introduced_by evidence | Fixed: both the finding line and the causal line must exist. Regression submits a nonexistent line. |
+| 6. Duplicated validation | Fixed: one shared relative-path validator; the controller skips re-validation of an already validated submission. |
+| 7. Extra git spawns | Fixed: a single numstat against HEAD, which is what the encoded fingerprint covers. |
+| 8. Optional introduced_by in strict schemas | Fixed: declared in the schema up front as required-but-nullable. Regression asserts the schema and null acceptance. |
+
+The updated deterministic suite has 52 passing tests (previously 48). These dispositions do not automatically resolve external review threads or substitute for reviewer verification.

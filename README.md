@@ -30,7 +30,7 @@ From your existing **Build** session:
 
 **No goal required.** Bare `start` previews uncommitted changes against a pinned HEAD, including staged and non-ignored new files. It proposes existing npm test/lint scripts and asks you to approve the scope and checks. No commands or models run during the preview. Approval is one-use, session-bound, expires after ten minutes, and is invalidated by source/index changes. If no scripts are found, supply a check explicitly.
 
-Approval shows the selected script bodies and their pre/post hooks, not just command names. Known launch-control files in the check directory and its ancestors are fingerprinted; changes stop execution before the next check and require a fresh approval. Automatic edits cannot change these control files. Confirmation revalidates integrity without re-running script discovery. The native server slash fallback also prints the exact one-use approval command.
+Approval shows the selected script bodies and their pre/post hooks, not just command names. Known launch-control files (package manifests, Makefiles, pytest/tox/pyproject/setup, conftest, Jest/Vitest/ESLint/Babel/Playwright/TypeScript configs, pom.xml, build.gradle, go.mod) are fingerprinted from the check directory up to the worktree root; changes stop execution before the next check and require a fresh approval. Automatic edits cannot change these control files. Confirmation revalidates integrity without re-running script discovery. The native server slash fallback also prints the exact one-use approval command.
 
 Explicit checks authorize execution without the discovery confirmation dialog:
 
@@ -45,7 +45,7 @@ Explicit checks authorize execution without the discovery confirmation dialog:
 
 The TUI/Desktop parts render command results in native dialogs, and progress transitions as native toasts. RPC returns results directly without starting a model turn just to show text. Progress includes scope/base/files, reviewer model/session, check execution, review/fix phases, findings and terminal reasons. Status includes durable progress history and check results. Passive synthetic session messages are only a transcript fallback—not the primary UI.
 
-Progress retains at most 64 events, with bounded message text and a dropped-event count; full findings/check results remain in their structured state fields. Final feedback uses one delivery channel: RPC notifications when available, otherwise the non-resuming transcript fallback. State is still persisted per event for crash visibility.
+Progress retains at most 64 events, with bounded message text and a dropped-event count; full findings/check results remain in their structured state fields. The terminal report is always written to the session transcript (non-resuming) and also sent as an RPC notification, so clients without a TUI/Desktop part still see the result. Each channel receives it once. State is still persisted per event for crash visibility.
 
 Use the owning fixer session for control. Ordinary new user prompts cancel automation; status/stop client commands go through RPC, not `session.prompt`, and do not trigger prompt cancellation.
 
@@ -80,7 +80,7 @@ Use a dedicated worktree when other editors/sessions are active. The controller 
 
 Automatic edits reject every symlink component, including dangling aliases and ancestors of new paths. Protected paths include `.git`, `.env*`, agent/runtime instruction/configuration paths, ignored files and `node_modules`. Fixes needing those paths require human takeover. Read/search tools skip symlinks; direct symlink reads are rejected.
 
-Known check controls (`package.json`, `.npmrc`, Makefiles and common Python launch configuration) are also protected. This pins launch definitions, not every transitive implementation read by an arbitrary shell command. Source/tests are intentionally editable; explicit commands and trusted repository code retain host authority. Source inspection rechecks ancestor components for each file rather than caching stale symlink-safety decisions across opens.
+The same control files are protected from automatic edits repo-wide, and the fixer prompt says so, so it reports a disputed finding instead of attempting a denied edit. This pins launch definitions, not every transitive implementation read by an arbitrary shell command. Source/tests are intentionally editable; explicit commands and trusted repository code retain host authority. Source inspection rechecks ancestor components for each file rather than caching stale symlink-safety decisions across opens.
 
 This is **not an OS sandbox**. Approved checks and evolving repository scripts execute with your host authority and may have side effects. Existing trusted plugins remain privileged. Concurrent hostile filesystem replacement is not eliminated by path checks. Only run checks in trusted repositories.
 
@@ -100,7 +100,7 @@ node scripts/recover.mjs /path/to/project RUN_ID --confirm-processes-stopped
 
 Recovery serializes competing requests, validates run/nonce/host identity, refuses a live or unknown owner, archives the exact stale claim and marks its state stopped. The flag is your assertion about surviving children: a dead parent PID alone cannot prove their absence. PID reuse may conservatively block recovery. Never remove a live claim to force another run.
 
-After unconfirmed check-process cleanup, stop does **not** retry signalling a recorded process-group number: it may have been reused. The claim remains held for explicit investigation/recovery. Session interruption can still be retried through OpenCode's session API; numeric process IDs are not treated as durable process identities.
+After unconfirmed check-process cleanup, the run ends and the fixer session is released immediately; nothing re-signals a recorded process-group number, which may have been reused. The worktree claim is retained and re-labelled with the check process's PID, so `scripts/recover.mjs` succeeds once that process is gone and refuses while it is alive. No OpenCode restart is needed. Session interruption can still be retried through OpenCode's session API; numeric process IDs are not treated as durable process identities.
 
 ## Development
 
