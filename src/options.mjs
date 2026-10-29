@@ -22,8 +22,11 @@ function tokenize(input) {
 }
 
 export function parseCommand(input = '') {
-  const [action = 'status', ...args] = tokenize(input);
-  if (!['start', 'status', 'stop'].includes(action)) throw new Error('Use start, status, or stop.');
+  const tokens = tokenize(input);
+  // start is the default: anything that is not status or stop (including nothing) is a start request.
+  const explicit = ['start', 'status', 'stop'].includes(tokens[0]);
+  const action = explicit ? tokens[0] : 'start';
+  const args = explicit ? tokens.slice(1) : tokens;
   if (action !== 'start') {
     if (args.length) throw new Error(`${action} takes no arguments.`);
     return { action };

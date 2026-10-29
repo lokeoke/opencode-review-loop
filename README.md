@@ -23,10 +23,13 @@ Keep the clone at its installed path. Reinstall after moving it. OpenCode watche
 From your existing **Build** session:
 
 ```text
-/review-loop start
+/review-loop            # same as /review-loop start: preview, then approve
+/review-loop 64         # a pull request URL or number; flags also imply start
 /review-loop status
 /review-loop stop
 ```
+
+`start` is the default: a bare `/review-loop`, or any first argument other than `status` or `stop`, previews a start and asks for approval. Nothing runs until you approve. `/review-loop start …` still works.
 
 **No goal required.** Bare `start` previews uncommitted changes against a pinned HEAD, including staged and non-ignored new files. It proposes existing npm test/lint scripts and asks you to approve the scope and checks. No commands or models run during the preview. Approval is one-use, session-bound, expires after ten minutes, and is invalidated by source/index changes. If no scripts are found, supply a check explicitly.
 

@@ -103,7 +103,7 @@ export function createPlugin(dependencies = {}) {
             const state = await engine.status(sessionID);
             text = state ? JSON.stringify(state, null, 2) : 'No review loop recorded for this worktree.';
           }
-        } catch (error) { text = `Review loop: ${error.message}\nUsage: /review-loop start [<pull request URL or number>] [--base main] [--check "npm test"]`; }
+        } catch (error) { text = `Review loop: ${error.message}\nUsage: /review-loop [<pull request URL or number>] [--base main] [--check "npm test"] | status | stop`; }
         return { text };
       };
       // The TUI and Desktop parts own the /review-loop slash command and call this RPC. Registering a slash command here

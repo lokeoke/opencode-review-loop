@@ -54,6 +54,19 @@ test('one global command runs checks and a separate Copilot review without chang
   assert.match(f.reports.at(-1), /PASSED/);
 });
 
+test('starting while a loop is active tells the user to use status or stop', async (t) => {
+  const f = await fixture(t);
+  let release, reached;
+  const prompted = new Promise((resolve) => { reached = resolve; });
+  f.setPrompt(() => new Promise((resolve) => { release = resolve; reached(); }));
+  const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
+  await prompted;
+  await assert.rejects(f.engine.start('fixer', { base: 'main', checks: ['exit 0'] }), /review-loop status.*review-loop stop/s);
+  await f.engine.stop('fixer');
+  release?.();
+  await task.done;
+});
+
 test('a finding is fixed in the existing session and explicitly resolved by the same reviewer', async (t) => {
   const f = await fixture(t);
   f.setPrompt(async (input) => {

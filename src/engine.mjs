@@ -64,7 +64,7 @@ export class Engine {
 
   async start(sessionID, options) {
     if (this.disposed) throw new Error('Review-loop plugin is unloading.');
-    if (this.activeFor(sessionID)) throw new Error('An active run already owns this fixer session.');
+    if (this.activeFor(sessionID)) throw new Error('A review loop is already running in this session. Use /review-loop status to follow it or /review-loop stop to cancel it.');
     const fixer = await this.ctx.session.get({ sessionID });
     if (fixer.agent !== 'build') throw new Error('Switch to the Build agent before starting a review loop.');
     if (!fixer.model) throw new Error('The fixer session must have an explicit selected model.');

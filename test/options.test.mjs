@@ -34,3 +34,15 @@ test('a pull request URL or number is a positional reference and other positiona
   assert.throws(() => parseCommand('start 64 --base main'), /own base/);
   assert.throws(() => parseCommand('start 64 65'), /one pull request/i);
 });
+
+test('start is the default: a bare command, flags and a pull request reference all mean start', () => {
+  const url = 'https://github.com/pfizer-fit/kairos-product/pull/64';
+  assert.deepEqual(parseCommand(''), parseCommand('start'));
+  assert.deepEqual(parseCommand(undefined), parseCommand('start'));
+  assert.deepEqual(parseCommand('64'), parseCommand('start 64'));
+  assert.deepEqual(parseCommand(url), parseCommand(`start ${url}`));
+  assert.deepEqual(parseCommand('--base main --check "npm test"'), parseCommand('start --base main --check "npm test"'));
+  assert.equal(parseCommand('status').action, 'status');
+  assert.equal(parseCommand('stop').action, 'stop');
+  assert.throws(() => parseCommand('statuss'), /Unknown argument: statuss/);
+});
