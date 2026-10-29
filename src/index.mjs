@@ -52,16 +52,17 @@ export function createPlugin(dependencies = {}) {
         let text;
         try {
           let options = parseCommand(argumentsText);
-        let approved = false;
-        // A pull request fixes the base and scope. Resolution never changes the checkout.
-        const withPullRequest = async (parsed, fresh = false) => {
-          if (!parsed.pr || (parsed.pullRequest && !fresh)) return parsed;
-          const session = await ctx.session.get({ sessionID });
-          const pullRequest = await resolvePullRequest(parsed.pr, session.location.directory, dependencies);
-          return { ...parsed, base: pullRequest.baseSha, pullRequest };
-        };
+          let approved = false;
+          // A pull request fixes the base and scope. Resolution never changes the checkout.
+          const withPullRequest = async (parsed, fresh = false) => {
+            if (!parsed.pr || (parsed.pullRequest && !fresh)) return parsed;
+            const session = await ctx.session.get({ sessionID });
+            const pullRequest = await resolvePullRequest(parsed.pr, session.location.directory, dependencies);
+            return { ...parsed, base: pullRequest.baseSha, pullRequest };
+          };
           if (options.action === 'start') {
             if (compatibilityError) throw compatibilityError;
+            if (!options.confirm && engine.activeFor(sessionID)) throw new Error('A review loop is already running in this session. Use /review-loop status to follow it or /review-loop stop to cancel it.');
             if (!options.confirm) options = await withPullRequest(options);
             if (options.confirm) {
               const approval = approvals.get(sessionID);
@@ -69,8 +70,8 @@ export function createPlugin(dependencies = {}) {
               if (!approval || approval.token !== options.confirm || Date.now() > approval.expires) throw new Error('Approval expired or does not belong to this session. Run start again.');
               if (approval.options.pr) {
                 const fresh = (await withPullRequest(approval.options, true)).pullRequest;
-                const approved = approval.options.pullRequest;
-                if (fresh.headSha !== approved.headSha || fresh.baseSha !== approved.baseSha || fresh.state !== approved.state || fresh.title !== approved.title || fresh.body !== approved.body) throw new Error(`Pull request #${approved.number} changed since approval. Run start again.`);
+                const expected = approval.options.pullRequest;
+                if (fresh.headSha !== expected.headSha || fresh.baseSha !== expected.baseSha || fresh.state !== expected.state || fresh.title !== expected.title || fresh.body !== expected.body) throw new Error(`Pull request #${expected.number} changed since approval. Run start again.`);
               }
               const session = await ctx.session.get({ sessionID });
               const current = await inspectScope(session.location.directory, approval.options);

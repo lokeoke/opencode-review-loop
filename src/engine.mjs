@@ -88,7 +88,7 @@ export class Engine {
     run.state.approvedChecks = options.checks;
     run.state.scopeKind = scopeKind(options);
     if (options.pullRequest) {
-      const { body, ...identity } = options.pullRequest; // author text is passed to the reviewer, not stored in status
+      const { body, title, ...identity } = options.pullRequest; // author text is passed to the reviewer, not stored in status
       run.state.pullRequest = identity;
     }
     run.state.checkPolicy = checkPolicy;

@@ -7,5 +7,5 @@ import { COMMAND_DESCRIPTION, COMMAND_NAME } from '../src/command.mjs';
 const root = new URL('../', import.meta.url);
 await mkdir(new URL('dist/', root), { recursive: true });
 const source = await readFile(new URL('src/gui-template.cjs', root), 'utf8');
-await writeFile(new URL('dist/gui-experimental.cjs', root), source.replace('__REVIEW_LOOP_CONTRACT__', JSON.stringify(ReviewLoop)).replace('__REVIEW_LOOP_COMMAND__', JSON.stringify({ name: COMMAND_NAME, description: COMMAND_DESCRIPTION })));
+await writeFile(new URL('dist/gui-experimental.cjs', root), source.replace('__REVIEW_LOOP_CONTRACT__', () => JSON.stringify(ReviewLoop)).replace('__REVIEW_LOOP_COMMAND__', () => JSON.stringify({ name: COMMAND_NAME, description: COMMAND_DESCRIPTION })));
 console.log(`Built ${fileURLToPath(new URL('dist/gui-experimental.cjs', root))}`);

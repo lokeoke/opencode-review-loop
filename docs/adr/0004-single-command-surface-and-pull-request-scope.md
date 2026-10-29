@@ -15,6 +15,6 @@ Trade-off: a host with neither client part has no slash command. The Desktop GUI
 - **Resolution:** `gh pr view` supplies head, base and state. URLs are matched strictly; a bare number needs one unambiguous GitHub remote. Nothing is posted to GitHub.
 - **No checkout switching:** the working tree must already be at the pull request head. Otherwise the run is refused and `gh pr checkout N` is printed. Switching branches under a user's edits was rejected as too risky. Only the missing base commit is fetched, narrowly.
 - **Uncommitted edits** are refused unless `--include-uncommitted`, so unrelated local work is never silently reviewed.
-- **Untrusted text:** title and body go to the reviewer as data, are not stored in status, and are described as intent evidence only.
+- **Untrusted text:** title and body go to the reviewer as data, neither is stored in status (the title is still shown in the approval preview), and are described as intent evidence only.
 - **Approval** re-resolves the pull request and voids on any head, base or state change. Merged pull requests are refused; closed and fork pull requests warn.
 - **Large changes:** a diff over the embed budget is read per file through the source tool's `diff` operation. The controller refuses a complete review until every changed file's diff was read to its end, and fails closed above 300 files. This proves access, not understanding. Binary changes still stop the run.

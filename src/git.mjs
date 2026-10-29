@@ -170,7 +170,11 @@ export class GitScope {
       let text;
       if (added.includes(path)) {
         if (!await this.contains(join(this.root, path))) throw new Error('Path is not a changed file in this review.');
-        text = `New file ${JSON.stringify(path)}:\n${await readFile(join(this.root, path), 'utf8')}`;
+        const stat = await lstat(join(this.root, path));
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SOURCE_FILE_BYTES) throw new Error('New file cannot be read: it is not a regular file or exceeds the per-file size limit.');
+        const content = await readFile(join(this.root, path), 'utf8');
+        if (content.includes('\0')) throw new Error('Binary new files need manual review.');
+        text = `New file ${JSON.stringify(path)}:\n${content}`;
       } else text = await git(this.root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', this.baseSha, '--', path]);
       lines = splitDiffLines(text);
       this.diffCache.set(path, lines);
@@ -241,12 +245,15 @@ export class GitScope {
     const index = createHash('sha256').update(cachedBinary).digest('hex');
     let diff = baseDiff;
     if (/^Binary files .* differ$/m.test(diff)) throw new Error('Binary changes need manual review.');
+    let size = Buffer.byteLength(diff);
     for (const file of added.sort()) {
       const content = await readFile(join(this.root, file), 'utf8');
       if (content.includes('\0')) throw new Error('Binary new files need manual review.');
-      diff += `\nNew file ${JSON.stringify(file)}:\n${content}\n`;
+      const entry = `\nNew file ${JSON.stringify(file)}:\n${content}\n`;
+      size += Buffer.byteLength(entry);
+      if (size <= MAX_REVIEW_BYTES) diff += entry; // past the limit the embedded diff is discarded, so stop building it
     }
-    const oversized = Buffer.byteLength(diff) > MAX_REVIEW_BYTES;
+    const oversized = size > MAX_REVIEW_BYTES;
     return { fingerprint: hash.digest('hex'), files, diff: oversized ? undefined : diff, oversized, index };
   }
 }
