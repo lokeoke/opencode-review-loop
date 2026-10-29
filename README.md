@@ -41,6 +41,10 @@ Explicit checks authorize execution without the discovery confirmation dialog:
 
 `--base main` reviews the complete branch/worktree change against its pinned merge base. Without it, the baseline is the current HEAD. `--goal` is optional extra context, not a required task description. Reviewers inspect the diff, surrounding source and repository conventions for concrete correctness, security, regression and test-quality problems; they must not invent acceptance criteria. The fixer transcript is not copied into reviewer context.
 
+### Reviewing a pull request
+
+`/review-loop start https://github.com/owner/repo/pull/64` (or just `64`) reviews that pull request's changes against its merge base. Requirements: the GitHub CLI (`gh`) signed in, and the checkout already at the pull request head (`gh pr checkout 64`; the plugin never switches branches). Uncommitted local edits are refused unless you pass `--include-uncommitted`. Merged pull requests are refused; closed and fork pull requests show a warning. Nothing is posted to GitHub. Pull request title and body are treated as untrusted data. Diffs too large to embed are read file by file, and a PASS requires every file to have been read to its end; this proves access, not understanding. Binary changes and more than 300 files stop the run.
+
 ## Transparency
 
 The TUI/Desktop parts render command results in native dialogs, and progress transitions as native toasts. RPC returns results directly without starting a model turn just to show text. Progress includes scope/base/files, reviewer model/session, check execution, review/fix phases, findings and terminal reasons. Status includes durable progress history, check results, and any policy denials (resource and reason). A denied edit says which path was refused and why, for example a directory resource, a protected control file, or an ignored path. The terminal report is also written to the transcript as a passive, non-resuming message.
