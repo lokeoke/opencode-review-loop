@@ -38,13 +38,24 @@ export class GitScope {
     const baseSha = (await git(root, ['merge-base', 'HEAD', baseCommit])).trim();
     const head = (await git(root, ['rev-parse', 'HEAD'])).trim();
     const branch = await branchName(root);
-    return new GitScope({ root, cwd, baseSha, head, branch });
+    // Keep the directory exactly as OpenCode reports it: resource paths are relative to it, not to its canonical form.
+    return new GitScope({ root, cwd, sessionDirectory: resolve(directory), baseSha, head, branch });
   }
 
   constructor(info) { Object.assign(this, info); }
 
+  // Resource paths are relative to the session directory as OpenCode reports it. Resolve them lexically there,
+  // then map anything under that directory onto its canonical form. Deliberately no realpath on the result:
+  // following a symlink component inside the worktree would defeat the symlink rejection below.
+  resolveResource(path) {
+    const session = this.sessionDirectory ?? this.cwd;
+    const candidate = resolve(session, path);
+    const inside = relative(session, candidate);
+    return inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside) ? candidate : resolve(this.cwd, inside);
+  }
+
   async contains(path) {
-    const candidate = resolve(this.cwd, path);
+    const candidate = this.resolveResource(path);
     const rel = relative(this.root, candidate);
     if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel) || sensitivePath(rel)) return false;
     let existing = this.root;
@@ -63,7 +74,7 @@ export class GitScope {
   // an unclassifiable path is a visible, specific denial rather than a silent one.
   async editDenial(path) {
     if (!await this.contains(path)) return 'outside the worktree, through a symlink component, or a sensitive path';
-    const file = relative(this.root, resolve(this.cwd, path)).split(sep).join('/');
+    const file = relative(this.root, this.resolveResource(path)).split(sep).join('/');
     if (!file) return 'the worktree root is a directory, not an editable file';
     if (isCheckControlPath(file)) return 'protected check/launch control file';
     if (/(^|\/)(AGENTS\.md|CLAUDE\.md|\.opencode|\.claude|\.cursor|\.agents|node_modules|\.gitignore|\.gitattributes)($|\/)/i.test(file)) return 'protected agent/runtime configuration or dependency path';

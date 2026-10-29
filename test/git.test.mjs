@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm, symlink, truncate } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, symlink, truncate, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { test } from 'node:test';
 import { randomBytes } from 'node:crypto';
@@ -98,4 +98,25 @@ test('large changed binary assets stop with a useful reason before encoded diff 
   await writeFile(join(root, 'asset.bin'), randomBytes(7 * 1024 * 1024));
   const scope = await GitScope.open(root, 'HEAD');
   await assert.rejects(scope.snapshot(), /Binary changes need manual review/);
+});
+
+test('resource paths are resolved against the session directory as OpenCode reports it, even through a symlinked location', async (t) => {
+  const base = await mkdtemp(join(tmpdir(), 'opencode-review-loop-alias-'));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const real = join(base, 'real'), alias = join(base, 'alias');
+  await symlink('.', join(base, 'unused')).catch(() => {});
+  execFileSync('mkdir', [real]);
+  const git = (...args) => execFileSync('git', args, { cwd: real, stdio: 'ignore' });
+  git('init', '-b', 'main');
+  await writeFile(join(real, 'app.js'), 'before');
+  git('add', '.'); git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'Initial');
+  await symlink(real, alias);
+  const scope = await GitScope.open(alias, 'HEAD');
+  const canonicalFile = join(await realpath(real), 'app.js');
+  // OpenCode reports the canonical file relative to the (non-canonical) session directory.
+  const reported = relative(alias, canonicalFile);
+  assert.match(reported, /^\.\./, 'the reported path climbs out of the alias');
+  assert.equal(await scope.editDenial(reported), undefined);
+  assert.equal(await scope.editDenial(canonicalFile), undefined);
+  assert.match(await scope.editDenial(relative(alias, join(base, 'elsewhere.js'))), /outside the worktree/, 'a genuinely external path is still refused');
 });
