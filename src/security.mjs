@@ -2,6 +2,7 @@ const SOURCE = 'review_loop_source';
 const REVIEW = 'review_loop_submit_review';
 const FIX = 'review_loop_submit_fix';
 const EDIT_TOOLS = ['patch', 'edit', 'write'];
+export const DENIAL_PREFIX = 'Denied by review-loop policy:';
 
 function allowedTools(active, sessionID) {
   if (active.run.terminal) return [];
@@ -22,14 +23,21 @@ export async function installGuards(ctx, engine) {
     if (!active) return;
     const allowed = allowedTools(active, event.sessionID);
     if ([SOURCE, REVIEW, FIX].includes(event.action) && allowed.includes(event.action)) return;
+    let reasons = ['not permitted in the active review-loop phase'];
     if (event.action === 'edit' && allowed.includes('patch')) {
       try {
         await engine.assertSession(active, event.sessionID);
-        if (event.resources.length && (await Promise.all(event.resources.map((path) => active.scope.canEdit(path)))).every(Boolean)) return;
-      } catch { /* Deny when the session moved or its identity cannot be verified. */ }
+        reasons = (await Promise.all(event.resources.map(async (path) => {
+          const reason = await active.scope.editDenial(path);
+          return reason && `${JSON.stringify(path)}: ${reason}`;
+        }))).filter(Boolean);
+        if (!event.resources.length) reasons.push('no resource was supplied');
+        if (!reasons.length) return;
+      } catch (error) { reasons = [`session identity could not be verified (${error.message})`]; }
     }
+    engine.recordDenial?.(active, event.action, event.resources, reasons);
     event.effect = 'deny';
-    event.message = 'This action is outside the active review-loop phase and trust boundary.';
+    event.message = `${DENIAL_PREFIX} ${event.action}: ${reasons.join('; ')}`;
   });
   await ctx.session.hook('prompt', async (event) => {
     const active = engine.activeFor(event.sessionID);

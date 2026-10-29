@@ -19,15 +19,16 @@ test('reviewer model requests see only source and result tools, not shell, MCP, 
 });
 
 test('fixer edits must stay inside the worktree and no tools remain after submission', async () => {
-  const hooks = {};
-  const active = { reviewerID: 'reviewer', fixerID: 'fixer', run: { terminal: false, state: { phase: 'fixing' } }, scope: { canEdit: async (path) => path === 'app.js' } };
+  const hooks = {}, denials = [];
+  const active = { reviewerID: 'reviewer', fixerID: 'fixer', run: { terminal: false, state: { phase: 'fixing' } }, scope: { editDenial: async (path) => path === 'app.js' ? undefined : 'outside the worktree' } };
   await installGuards({
     session: { hook: async (name, fn) => { hooks[name] = fn; } },
     permission: { hook: async (name, fn) => { hooks[name] = fn; } },
-  }, { activeFor: () => active, assertSession: async () => {} });
+  }, { activeFor: () => active, assertSession: async () => {}, recordDenial: (_active, action, resources, reasons) => denials.push({ action, resources, reasons }) });
   const outside = { sessionID: 'fixer', action: 'edit', resources: ['../outside'], effect: 'allow' };
   await hooks.evaluate(outside);
   assert.equal(outside.effect, 'deny');
+  assert.match(outside.message, /"\.\.\/outside": outside the worktree/, 'the denial names the resource and the reason');
   const inside = { sessionID: 'fixer', action: 'edit', resources: ['app.js'], effect: 'allow' };
   await hooks.evaluate(inside);
   assert.equal(inside.effect, 'allow');

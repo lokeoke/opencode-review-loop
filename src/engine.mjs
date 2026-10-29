@@ -8,12 +8,14 @@ import { runCheck } from './checks.mjs';
 import { fixPrompt, reviewPrompt } from './prompts.mjs';
 import { checkPolicyFingerprint } from './check-policy.mjs';
 import { validateReview } from './contracts.mjs';
+import { DENIAL_PREFIX } from './security.mjs';
 
 export const PHASE_TIMEOUT_MS = 10 * 60_000;
 export const RUN_TIMEOUT_MS = 45 * 60_000;
 const CONTROL_TIMEOUT_MS = 15_000;
 export const MAX_PROGRESS_EVENTS = 64;
 const MAX_PROGRESS_TEXT = 8192;
+const MAX_DENIALS = 32;
 // Locations load separate plugin instances; session guards must follow a moved session.
 const ACTIVE_RUNS = Symbol.for('opencode-review-loop.active.v1');
 globalThis[ACTIVE_RUNS] ??= new Map();
@@ -43,6 +45,12 @@ export class Engine {
     await active.lease.save(active.run.state);
     try { await this.report?.(active.fixerID, text); }
     catch (error) { console.error(`[review-loop] Progress delivery failed: ${error.message}`); }
+  }
+
+  recordDenial(active, action, resources, reasons) {
+    const denials = (active.run.state.denials ??= []);
+    denials.push({ time: new Date().toISOString(), action, resources: resources.slice(0, 8), reasons });
+    if (denials.length > MAX_DENIALS) denials.shift();
   }
 
   async status(sessionID) {
@@ -212,7 +220,9 @@ export class Engine {
         const invalidInput = ['validation', 'invalid_input'].includes(error?.type);
         const unknownTool = error?.type === 'tool.execution' && /^No tool named "[a-zA-Z0-9_-]+" is currently available\./.test(error.message ?? '');
         const submission = role === 'reviewer' ? 'review_loop_submit_review' : 'review_loop_submit_fix';
-        return (invalidInput || unknownTool) && tools.some((later) => later.name === (unknownTool ? submission : part.name) && later.state?.status === 'completed' && tools.indexOf(later) > tools.indexOf(part));
+        // A guard denial executed nothing; the fixer corrected course if a later same-tool call completed.
+        const guardDenial = error?.type === 'permission.rejected' && (error.message ?? '').startsWith(DENIAL_PREFIX);
+        return (invalidInput || unknownTool || guardDenial) && tools.some((later) => later.name === (unknownTool ? submission : part.name) && later.state?.status === 'completed' && tools.indexOf(later) > tools.indexOf(part));
       };
       if (messages.some((message) => message.error || (message.type === 'assistant' && ['length', 'content-filter', 'error', 'unknown'].includes(message.finish))) || tools.some((part) => part.state?.status === 'error' && !recovered(part))) throw new Error(`${role} turn had an incomplete result or unrecovered tool error.`);
     } catch (error) {

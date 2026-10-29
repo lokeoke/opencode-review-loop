@@ -59,14 +59,19 @@ export class GitScope {
     return true;
   }
 
-  async canEdit(path) {
-    if (!await this.contains(path)) return false;
+  // Returns why an automatic edit of this path is refused, or undefined when allowed. Never throws:
+  // an unclassifiable path is a visible, specific denial rather than a silent one.
+  async editDenial(path) {
+    if (!await this.contains(path)) return 'outside the worktree, through a symlink component, or a sensitive path';
     const file = relative(this.root, resolve(this.cwd, path)).split(sep).join('/');
-    if (isCheckControlPath(file)) return false;
-    if (/(^|\/)(AGENTS\.md|CLAUDE\.md|\.opencode|\.claude|\.cursor|\.agents|node_modules|\.gitignore|\.gitattributes)($|\/)/i.test(file)) return false;
-    try { await git(this.root, ['check-ignore', '--quiet', '--', file]); return false; }
-    catch (error) { if (error.code === 1) return true; throw error; }
+    if (!file) return 'the worktree root is a directory, not an editable file';
+    if (isCheckControlPath(file)) return 'protected check/launch control file';
+    if (/(^|\/)(AGENTS\.md|CLAUDE\.md|\.opencode|\.claude|\.cursor|\.agents|node_modules|\.gitignore|\.gitattributes)($|\/)/i.test(file)) return 'protected agent/runtime configuration or dependency path';
+    try { await git(this.root, ['check-ignore', '--quiet', '--', file]); return 'ignored by Git'; }
+    catch (error) { return error.code === 1 ? undefined : `Git could not classify the path (exit ${error.code})`; }
   }
+
+  async canEdit(path) { return (await this.editDenial(path)) === undefined; }
 
   async source({ operation, path = '', query = '', offset = 1, limit = 150 }) {
     if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error('Invalid source pagination.');

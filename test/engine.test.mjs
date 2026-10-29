@@ -259,6 +259,32 @@ test('regressions may be reported in unchanged source with explicit changed-code
   assert.match(state.reason, /disputed/);
 });
 
+const guardDenial = { type: 'tool', name: 'patch', state: { status: 'error', error: { type: 'permission.rejected', message: 'Denied by review-loop policy: edit: "/x": the worktree root is a directory, not an editable file' } } };
+
+test('a guard-denied edit that the model retries successfully does not fail the turn', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async () => {
+    const active = f.engine.activeFor('fixer');
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, issues: [], resolutions: [] });
+    f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [guardDenial, { type: 'tool', name: 'patch', state: { status: 'completed' } }] }]);
+  });
+  const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
+  await task.done;
+  assert.equal((await f.engine.status('fixer')).phase, 'passed');
+});
+
+test('a guard denial with no successful retry still fails the turn closed', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async () => {
+    const active = f.engine.activeFor('fixer');
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, issues: [], resolutions: [] });
+    f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [guardDenial] }]);
+  });
+  const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
+  await task.done;
+  assert.equal((await f.engine.status('fixer')).phase, 'stopped');
+});
+
 test('unchanged-file evidence must point at existing lines', async (t) => {
   const f = await fixture(t);
   f.setPrompt(async () => {

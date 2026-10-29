@@ -37,6 +37,7 @@ test('a pinned scope includes staged, unstaged, and new files without modifying 
   assert.equal(await scope.canEdit('.git/config'), false);
   assert.equal(await scope.canEdit('package.json'), false);
   assert.equal(await scope.canEdit('PACKAGE.JSON'), false);
+  for (const root of [scope.root, '.', '']) assert.match(await scope.editDenial(root), /root is a directory/, 'a directory resource is a specific denial, not a thrown error');
   for (const name of ['jest.config.js', 'conftest.py', 'GNUmakefile', 'go.mod']) assert.equal(await scope.canEdit(name), false, name);
   await symlink('.git/config', join(root, 'alias'));
   await symlink('/nonexistent-outside/file', join(root, 'dangling'));
