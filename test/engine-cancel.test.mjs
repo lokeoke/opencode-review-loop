@@ -34,7 +34,7 @@ test('changing the fixer model during review invalidates an otherwise clean resu
   const f = await fixture(t);
   f.setPrompt(async () => {
     const active = f.engine.activeFor('fixer');
-    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], issues: [], resolutions: [] });
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] });
     f.sessions.get('fixer').model = { providerID: 'github-copilot', id: 'claude-sonnet-5.5' };
   });
   const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'], goal: 'Change value' });
@@ -92,7 +92,7 @@ test('cancellation aborts stalled reviewer creation and releases the worktree', 
 
 test('stop after a run finished does not touch the released lease, and real save errors still surface', async (t) => {
   const f = await fixture(t);
-  f.setPrompt(async () => { await f.engine.submitReview('reviewer', { runId: f.engine.activeFor('fixer').run.state.id, round: 1, complete: true, limitations: [], issues: [], resolutions: [] }); });
+  f.setPrompt(async () => { await f.engine.submitReview('reviewer', { runId: f.engine.activeFor('fixer').run.state.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] }); });
   const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'], goal: 'Change value' });
   await task.done;
   await f.engine.stop('fixer');

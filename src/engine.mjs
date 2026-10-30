@@ -204,10 +204,11 @@ export class Engine {
 
   describe(active) {
     const state = active.run.state;
+    const assumptions = state.history.at(-1)?.review.assumptions ?? [];
     const stopped = state.phase === 'stopped'
       ? `\nStopped during ${state.stoppedPhase ?? 'an unknown phase'}; findings and partial edits are not verified. Inspect status and changes before starting a new review. Unconfirmed cleanup retains the worktree claim.`
       : '';
-    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${state.maxReviews} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}\nReviewer: ${modelLabel(active.reviewerModel)}${state.reviewerID ? `\nReviewer session: ${state.reviewerID}` : ''}${state.reviewerNote ? `\nReviewer note (model text, unverified): ${state.reviewerNote}` : ''}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
+    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${state.maxReviews} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}\nReviewer: ${modelLabel(active.reviewerModel)}${state.reviewerID ? `\nReviewer session: ${state.reviewerID}` : ''}${state.reviewerNote ? `\nReviewer note (model text, unverified): ${state.reviewerNote}` : ''}${assumptions.length ? `\nReviewer assumptions (unverified): ${assumptions.join(' ')}` : ''}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
   }
 
   ensureRunning(active) {

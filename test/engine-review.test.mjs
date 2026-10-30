@@ -9,7 +9,7 @@ test('a nonexistent-tool validation error can recover through a later valid subm
   const f = await fixture(t);
   f.setPrompt(async () => {
     const active = f.engine.activeFor('fixer');
-    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], issues: [], resolutions: [] });
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] });
     f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [
       { type: 'tool', name: 'submit_placeholder', state: { status: 'error', error: { type: 'tool.execution', message: 'No tool named "submit_placeholder" is currently available. Please use a tool from the available tool list.' } } },
       { type: 'tool', name: 'review_loop_submit_review', state: { status: 'completed' } },
@@ -24,7 +24,7 @@ test('a rejected review input can be corrected even when the host labels the err
   const f = await fixture(t);
   f.setPrompt(async () => {
     const active = f.engine.activeFor('fixer');
-    const review = { runId: active.run.state.id, round: 1, complete: true, limitations: [], issues: [], resolutions: [] };
+    const review = { runId: active.run.state.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] };
     await assert.rejects(f.engine.submitReview('reviewer', { ...review, resolutions: null }, { toolCallID: 'invalid' }), /Invalid resolutions/);
     await f.engine.submitReview('reviewer', review, { toolCallID: 'corrected' });
     f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [
@@ -41,7 +41,7 @@ test('an unknown tool error is not excused merely because a later submission suc
   const f = await fixture(t);
   f.setPrompt(async () => {
     const active = f.engine.activeFor('fixer');
-    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], issues: [], resolutions: [] });
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] });
     f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [
       { type: 'tool', id: 'not-recorded', name: 'review_loop_submit_review', state: { status: 'error', error: { type: 'unknown', message: 'Invalid resolutions.' } } },
       { type: 'tool', id: 'corrected', name: 'review_loop_submit_review', state: { status: 'completed' } },
@@ -60,7 +60,7 @@ test('a prior blocker can remain open after its file is reverted out of the diff
       await writeFile(join(f.directory, 'app.js'), 'export const value = 1;\n');
       await f.engine.submitFix('fixer', { runId, round, summary: 'Reverted file.', disputed: [] });
     } else await f.engine.submitReview('reviewer', {
-      runId, round, complete: true, limitations: [],
+      runId, round, complete: true, limitations: [], assumptions: [],
       issues: [{ id: 'value', severity: 'major', file: 'app.js', line: 1, problem: 'Incorrect value.', failure_scenario: 'Callers require three.', suggested_fix: 'Return three.' }],
       resolutions: round === 1 ? [] : [{ id: 'value', status: 'open', evidence: 'Revert did not implement the fix.' }],
     });
@@ -79,9 +79,9 @@ test('regressions may be reported in unchanged source with explicit changed-code
       return;
     }
     const issue = { id: 'helper', severity: 'major', file: 'helper.js', line: 1, problem: 'Null dereference.', failure_scenario: 'The changed caller passes undefined.', suggested_fix: 'Validate the caller input.' };
-    await assert.rejects(f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], issues: [issue], resolutions: [] }), /introduced_by/);
+    await assert.rejects(f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [issue], resolutions: [] }), /introduced_by/);
     issue.introduced_by = { file: 'app.js', line: 1, explanation: 'The modified caller introduces an undefined argument.' };
-    await f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], issues: [issue], resolutions: [] });
+    await f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [issue], resolutions: [] });
   });
   const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
   await task.done;
@@ -96,7 +96,7 @@ test('a guard-denied edit that the model retries successfully does not fail the 
   const f = await fixture(t);
   f.setPrompt(async () => {
     const active = f.engine.activeFor('fixer');
-    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], issues: [], resolutions: [] });
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] });
     f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [guardDenial, { type: 'tool', name: 'patch', state: { status: 'completed' } }] }]);
   });
   const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
@@ -108,7 +108,7 @@ test('a guard denial with no successful retry still fails the turn closed', asyn
   const f = await fixture(t);
   f.setPrompt(async () => {
     const active = f.engine.activeFor('fixer');
-    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], issues: [], resolutions: [] });
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] });
     f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [guardDenial] }]);
   });
   const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
@@ -145,7 +145,7 @@ test('plugin unload while fixing preserves findings and warns that edits are unv
       return blocked;
     }
     const active = f.engine.activeFor('fixer');
-    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], issues: [
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [
       { id: 'value', severity: 'major', file: 'app.js', line: 1, problem: 'Incorrect value.', failure_scenario: 'Callers receive the wrong value.', suggested_fix: 'Correct the value.' },
     ], resolutions: [] });
   });
@@ -166,8 +166,8 @@ test('unchanged-file evidence must point at existing lines', async (t) => {
   f.setPrompt(async () => {
     const active = f.engine.activeFor('fixer'), { id: runId, round } = active.run.state;
     const issue = { id: 'helper', severity: 'major', file: 'helper.js', line: 999, problem: 'Null dereference.', failure_scenario: 'The caller passes undefined.', suggested_fix: 'Validate.', introduced_by: { file: 'app.js', line: 1, explanation: 'The changed caller passes undefined.' } };
-    await assert.rejects(f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], issues: [issue], resolutions: [] }), /does not exist/);
-    await f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], issues: [], resolutions: [] });
+    await assert.rejects(f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [issue], resolutions: [] }), /does not exist/);
+    await f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] });
   });
   const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
   await task.done;
@@ -190,7 +190,7 @@ test('a modified approved launch definition is never executed on the next fix pa
     if (input.sessionID === 'fixer') {
       await writeFile(join(f.directory, 'package.json'), JSON.stringify({ scripts: { test: 'changed launch definition' } }));
       await f.engine.submitFix('fixer', { runId, round, summary: 'Changed launch metadata.', disputed: [] });
-    } else await f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], issues: [{ id: 'value', severity: 'major', file: 'app.js', line: 1, problem: 'Wrong value.', failure_scenario: 'Caller receives two.', suggested_fix: 'Return three.' }], resolutions: [] });
+    } else await f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [{ id: 'value', severity: 'major', file: 'app.js', line: 1, problem: 'Wrong value.', failure_scenario: 'Caller receives two.', suggested_fix: 'Return three.' }], resolutions: [] });
   });
   const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
   await task.done;

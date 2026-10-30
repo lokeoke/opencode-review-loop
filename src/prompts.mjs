@@ -24,8 +24,11 @@ You may locate a regression in unchanged source, but must include introduced_by:
 change causes the failure there. Do not report unrelated pre-existing defects.
 Explicitly resolve EVERY previous blocking finding as fixed/open/disputed with code evidence.
 Missing findings never prove a fix.
-In limitations, list everything you could not verify: files, callers or behaviour you did not trace.
-Prefer investigating further over listing a limitation. If limitations is not empty, submit complete=false.
+In limitations, list repository code you could not verify: changed files, callers, tests or behaviour in
+this repository that you did not trace. Prefer investigating further over listing a limitation.
+If limitations is not empty, submit complete=false.
+In assumptions, list facts outside this repository that your conclusions depend on, such as how external
+callers, deployment or configuration provide inputs. Assumptions are reported to the user and do not make the review incomplete.
 Call review_loop_submit_review exactly once, as your final action, after the investigation is done.
 Submission runId=${active.run.state.id}, round=${active.run.state.round}.
 
