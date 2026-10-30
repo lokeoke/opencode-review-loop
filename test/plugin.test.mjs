@@ -31,6 +31,19 @@ test('a host without client RPC gets a visible warning instead of a silently mis
   await cleanup?.();
 });
 
+test('custom tools reject missing permission responses without exposing a host exception', async () => {
+  const { default: plugin } = await import('../src/index.mjs');
+  const tools = new Map();
+  const cleanup = await plugin.setup(quietContext({
+    session: { hook: async () => {}, permission: { create: async () => undefined } },
+    tool: { transform: async (register) => register({ add: (tool) => tools.set(tool.name, tool) }) },
+    rpc: { register: async () => ({ events: { emit: async () => {} } }) },
+  }));
+  try {
+    await assert.rejects(tools.get('review_loop_source').execute({ operation: 'list' }, { sessionID: 'reviewer' }), /permission.*not explicitly allowed/i);
+  } finally { await cleanup(); }
+});
+
 test('bare start previews scope and existing checks; changed scope invalidates approval without model calls', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'opencode-review-loop-preview-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -54,6 +67,8 @@ test('bare start previews scope and existing checks; changed scope invalidates a
   assert.match(preview.text, /app.js/);
   assert.match(preview.text, /npm test; npm run lint/);
   assert.match(preview.text, /node test.mjs/);
+  assert.match(preview.text, /new (?:user )?input.*(?:stop|interrupt)/i);
+  assert.match(preview.text, /\/review-loop status.*\/review-loop stop/s);
   assert.match(preview.confirmation, /^start --confirm /);
   await writeFile(join(root, 'package.json'), 'malformed now');
   const expired = await command({ sessionID: 'fixer', text: preview.confirmation });
@@ -155,7 +170,9 @@ test('a bare start while a loop is running refuses immediately instead of showin
     rpc: { register: async (_contract, handlers) => { command = handlers.command; return { events: { emit: async () => {} } }; } },
   });
   t.after(cleanup);
-  assert.match((await command({ sessionID: 'fixer', text: 'start --check "exit 0"' })).text, /Review loop started/);
+  const started = (await command({ sessionID: 'fixer', text: 'start --check "exit 0"' })).text;
+  assert.match(started, /Review loop started/);
+  assert.match(started, /new (?:user )?input.*(?:stop|interrupt)/i);
   const second = await command({ sessionID: 'fixer', text: '' });
   assert.ok(second.text.includes(ALREADY_RUNNING));
   assert.equal(second.confirmation, undefined, 'no approval dialog is offered for a start that cannot run');
@@ -164,4 +181,8 @@ test('a bare start while a loop is running refuses immediately instead of showin
   let stopped = false;
   for (let i = 0; i < 100 && !stopped; i++) { stopped = /"phase": "stopped"/.test((await command({ sessionID: 'fixer', text: 'status' })).text); if (!stopped) await new Promise((resolve) => setImmediate(resolve)); }
   assert.ok(stopped, 'the run reaches the stopped phase');
+  const state = JSON.parse((await command({ sessionID: 'fixer', text: 'status' })).text);
+  assert.equal(state.stoppedPhase, 'checking');
+  assert.match(state.progress.at(-1).text, /stopped during checking/i);
+  assert.match(state.progress.at(-1).text, /inspect.*changes.*new review/i);
 });

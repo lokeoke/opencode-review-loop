@@ -9,6 +9,7 @@ import { resolvePullRequest } from './pr.mjs';
 import { describeScope, scopeKind } from './scope.mjs';
 import { checkPolicyFingerprint } from './check-policy.mjs';
 import { randomUUID } from 'node:crypto';
+import { INPUT_WARNING } from './command.mjs';
 
 const SOURCE_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['operation'],
@@ -34,7 +35,7 @@ export function createPlugin(dependencies = {}) {
       await ctx.tool.transform((editor) => {
         for (const [name, description, schema, handle] of [
           ['review_loop_source', 'Read/list/search worktree-relative source, or page one changed file\'s diff (operation diff). Literal search; paginate with offset/limit. No edits or shell.', SOURCE_SCHEMA, (sessionID, input) => engine.source(sessionID, input)],
-          ['review_loop_submit_review', 'Submit one structured review for the active run and round, then finish immediately.', REVIEW_SCHEMA, (sessionID, input) => engine.submitReview(sessionID, input)],
+          ['review_loop_submit_review', 'Submit one structured review for the active run and round, then finish immediately.', REVIEW_SCHEMA, (sessionID, input, context) => engine.submitReview(sessionID, input, { toolCallID: context.id })],
           ['review_loop_submit_fix', 'Submit a fix summary and disputed finding IDs, then finish immediately.', FIX_SCHEMA, (sessionID, input) => engine.submitFix(sessionID, input)],
         ]) {
           editor.add({
@@ -42,7 +43,7 @@ export function createPlugin(dependencies = {}) {
             async execute(input, context) {
               if (compatibilityError) throw compatibilityError;
               await assertPermission({ sessionID: context.sessionID, agent: context.agent, action: name, resources: ['*'], source: { type: 'tool', messageID: context.messageID, id: context.id } });
-              const result = await handle(context.sessionID, input);
+              const result = await handle(context.sessionID, input, context);
               return { content: result ?? 'Submission recorded provisionally. Finish this turn now; the controller owns the next step.' };
             },
           });
@@ -85,7 +86,7 @@ export function createPlugin(dependencies = {}) {
               const checks = options.checks.length ? options.checks : proposed.checks;
               const pr = options.pullRequest;
               const prLines = pr ? `Title: ${pr.title}\n${pr.isDraft ? 'Draft pull request. ' : ''}${pr.warnings.join(' ')}\nDescription (author text, untrusted): ${pr.body.slice(0, 300).replace(/\s+/g, ' ')}${pr.body.length > 300 ? ' …' : ''}\n` : '';
-              const text = `Scope: ${describeScope(options, proposed.scope.baseSha)}\n${prLines}Checkout: ${proposed.scope.root}\nBase: ${proposed.scope.baseSha}\nFiles (${proposed.snapshot.files.length} total; first 40 shown):\n${proposed.snapshot.files.slice(0, 40).join('\n')}\n\nProposed checks: ${checks.join('; ') || 'none found'}${options.checks.length ? ' (explicit)' : `\nScript definitions (including pre/post hooks):\n${proposed.definitions.join('\n')}`}\nNo commands or models have run. Approve only if all these changes belong to your task.`;
+              const text = `Scope: ${describeScope(options, proposed.scope.baseSha)}\n${prLines}Checkout: ${proposed.scope.root}\nBase: ${proposed.scope.baseSha}\nFiles (${proposed.snapshot.files.length} total; first 40 shown):\n${proposed.snapshot.files.slice(0, 40).join('\n')}\n\nProposed checks: ${checks.join('; ') || 'none found'}${options.checks.length ? ' (explicit)' : `\nScript definitions (including pre/post hooks):\n${proposed.definitions.join('\n')}`}\nNo commands or models have run. Approve only if all these changes belong to your task.\n${INPUT_WARNING}`;
               if (!checks.length) return { text: text + '\nSupply an explicit --check command to continue.' };
               const token = randomUUID();
               approvals.set(sessionID, { token, root: proposed.scope.root, directory: proposed.scope.cwd, fingerprint: proposed.snapshot.fingerprint, index: proposed.snapshot.index, expires: Date.now() + APPROVAL_TTL_MS, options: { ...options, scopeKind: scopeKind(options), base: proposed.scope.baseSha, checks, checkPolicy: proposed.checkPolicy } });
@@ -97,7 +98,7 @@ export function createPlugin(dependencies = {}) {
             }
             const { id } = await engine.start(sessionID, options);
             const warnings = options.pullRequest?.warnings.length ? ` Warning: ${options.pullRequest.warnings.join(' ')}` : '';
-            text = `Review loop started: ${id}. Scope: ${describeScope(options)}.${warnings} No goal required. Checks: ${options.checks.join('; ') || 'approval needed; no commands will run'}. Use status or stop. No automatic Git commits, pushes, or merges.`;
+            text = `Review loop started: ${id}. Scope: ${describeScope(options)}.${warnings} No goal required. Checks: ${options.checks.join('; ') || 'approval needed; no commands will run'}. ${INPUT_WARNING} No automatic Git commits, pushes, or merges.`;
           } else if (options.action === 'stop') {
             await engine.stop(sessionID);
             text = 'Cancellation requested; inspect progress for completion. Unconfirmed cleanup retains the lock.';

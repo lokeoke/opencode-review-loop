@@ -67,6 +67,7 @@ export class Run {
 
   stop(reason) {
     if (this.terminal) return;
+    this.state.stoppedPhase = this.state.phase;
     this.state.phase = 'stopped';
     this.state.reason = reason;
   }

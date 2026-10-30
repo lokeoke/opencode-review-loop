@@ -2,43 +2,44 @@ export const MAX_FINDINGS = 100;
 export const MAX_TEXT = 4000;
 export const SEVERITIES = ['blocker', 'major', 'minor'];
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
+export class ReviewInputError extends Error {}
 
 function relativePath(file, label) {
   text(file, label);
-  if (file.startsWith('/') || file.includes('\\') || file.split('/').some((part) => part === '..' || part === '.git' || part === '')) throw new Error(`${label} must be worktree-relative.`);
+  if (file.startsWith('/') || file.includes('\\') || file.split('/').some((part) => part === '..' || part === '.git' || part === '')) throw new ReviewInputError(`${label} must be worktree-relative.`);
 }
 
 function text(value, label) {
-  if (typeof value !== 'string' || !value.trim() || value.length > MAX_TEXT) throw new Error(`Invalid ${label}.`);
+  if (typeof value !== 'string' || !value.trim() || value.length > MAX_TEXT) throw new ReviewInputError(`Invalid ${label}.`);
 }
 
 function list(value, label) {
-  if (!Array.isArray(value) || value.length > MAX_FINDINGS) throw new Error(`Invalid ${label}.`);
+  if (!Array.isArray(value) || value.length > MAX_FINDINGS) throw new ReviewInputError(`Invalid ${label}.`);
 }
 
 export function validateReview(value) {
-  if (!value || typeof value.complete !== 'boolean') throw new Error('Review must state whether coverage is complete.');
+  if (!value || typeof value.complete !== 'boolean') throw new ReviewInputError('Review must state whether coverage is complete.');
   list(value.issues, 'issues');
   list(value.resolutions, 'resolutions');
   const ids = new Set();
   for (const issue of value.issues) {
-    if (!ID.test(issue.id) || ids.has(issue.id)) throw new Error('Invalid or duplicate finding id.');
+    if (!ID.test(issue.id) || ids.has(issue.id)) throw new ReviewInputError('Invalid or duplicate finding id.');
     ids.add(issue.id);
-    if (!SEVERITIES.includes(issue.severity)) throw new Error('Invalid severity.');
+    if (!SEVERITIES.includes(issue.severity)) throw new ReviewInputError('Invalid severity.');
     relativePath(issue.file, 'Finding path');
-    if (!Number.isSafeInteger(issue.line) || issue.line < 1) throw new Error('Invalid line.');
+    if (!Number.isSafeInteger(issue.line) || issue.line < 1) throw new ReviewInputError('Invalid line.');
     for (const key of ['problem', 'failure_scenario', 'suggested_fix']) text(issue[key], key);
     if (issue.introduced_by !== undefined && issue.introduced_by !== null) {
       relativePath(issue.introduced_by.file, 'Introduced-by path');
-      if (!Number.isSafeInteger(issue.introduced_by.line) || issue.introduced_by.line < 1) throw new Error('Invalid introduced-by line.');
+      if (!Number.isSafeInteger(issue.introduced_by.line) || issue.introduced_by.line < 1) throw new ReviewInputError('Invalid introduced-by line.');
       text(issue.introduced_by.explanation, 'causal explanation');
     }
   }
   const resolved = new Set();
   for (const resolution of value.resolutions) {
-    if (!ID.test(resolution.id) || resolved.has(resolution.id)) throw new Error('Invalid or duplicate resolution id.');
+    if (!ID.test(resolution.id) || resolved.has(resolution.id)) throw new ReviewInputError('Invalid or duplicate resolution id.');
     resolved.add(resolution.id);
-    if (!['fixed', 'open', 'disputed'].includes(resolution.status)) throw new Error('Invalid resolution status.');
+    if (!['fixed', 'open', 'disputed'].includes(resolution.status)) throw new ReviewInputError('Invalid resolution status.');
     text(resolution.evidence, 'resolution evidence');
   }
   return value;

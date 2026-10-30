@@ -61,12 +61,14 @@ test('diff coverage counts only contiguous pages from the start, and offsets pas
     const review = { runId, round: 1, complete: true, issues: [], resolutions: [] };
     const read = (path, offset) => f.engine.source('reviewer', { operation: 'diff', path, offset, limit: 200 });
     await assert.rejects(read('big0.js', 1_000_000_000), /beyond the end/);
-    for (let offset = 1; offset < 20_000; offset += 200) { const text = await read('big1.js', offset).catch(() => ''); if (text.endsWith('(end of diff)')) break; if (offset > 1 && offset < 400) continue; }
+    await read('big1.js', 1);
+    for (let offset = 401; offset < 20_000; offset += 200) if ((await read('big1.js', offset)).endsWith('(end of diff)')) break;
     await assert.rejects(f.engine.submitReview('reviewer', review), (error) => { refusal = error.message; return true; });
     for (const path of ['big0.js', 'big1.js', 'app.js']) for (let offset = 1; ; offset += 200) if ((await read(path, offset)).endsWith('(end of diff)')) break;
     await f.engine.submitReview('reviewer', review);
   });
   await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
   assert.match(refusal, /big0\.js/);
+  assert.match(refusal, /big1\.js/);
   assert.equal((await f.engine.status('fixer')).phase, 'passed');
 });
