@@ -37,4 +37,4 @@ On 2026-10-30, the authenticated OpenCode 2.2.2 service completed the smoke in t
 ## Pull-request review
 
 - 77 tests pass. Pull-request resolution uses a fake `gh` and real temporary Git repositories (strict parsing, wrong checkout refused, merged/closed/fork handling, narrow base fetch, bounded text). Approval is voided when the pull request changes after the preview. The oversized-diff gate is tested with fake reviewer sessions.
-- Not yet exercised live against a real GitHub pull request.
+- Live PR smoke on 2026-10-30 reviewed `lokeoke/opencode-review-loop` PR #3 at head `e132214` in a separate clean checkout, on OpenCode 2.2.2. Its `npm test` check and one review passed without findings. The reviewer submitted successfully but did not call the source tool, so this run proves PR-scope execution, not source-tool compatibility; the separate fixture smoke above exercised both reviewer tools.
