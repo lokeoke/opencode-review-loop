@@ -25,6 +25,7 @@ const DIAGNOSTIC_ERROR_TYPES = new Set(['validation', 'invalid_input', 'tool.exe
 const ACTIVE_RUNS = Symbol.for('opencode-review-loop.active.v1');
 globalThis[ACTIVE_RUNS] ??= new Map();
 
+const REVIEWER_NOTE_LIMIT = 2000;
 const modelLabel = (model) => `${model.providerID}/${model.id}${model.variant ? ` (${model.variant})` : ''}`;
 function sameModel(a, b) { return a?.providerID === b?.providerID && a?.id === b?.id && (a?.variant ?? 'default') === (b?.variant ?? 'default'); }
 
@@ -142,7 +143,10 @@ export class Engine {
         if (checked.fingerprint !== before.fingerprint || checked.index !== before.index) throw new Error('Verification changed source or the Git index.');
         run.checked(checked.fingerprint);
         active.changedFiles = new Set(checked.files);
-        active.unreadDiffs = checked.oversized ? new Set(checked.files) : new Set();
+        // Every changed file must be inspected through the source tool before a complete review;
+        // an embedded diff alone does not show the surrounding code.
+        active.uncovered = new Set(checked.files);
+        active.oversized = checked.oversized;
         active.diffCursor = new Map();
         if (run.terminal) break;
         await active.lease.save(run.state);
@@ -164,7 +168,9 @@ export class Engine {
           await active.lease.save(run.state);
         }
         await this.progress(active, `Round ${run.state.round}/${run.state.maxReviews} · Reviewing · session ${active.reviewerID}`);
-        await this.turn(active, active.reviewerID, reviewPrompt(active, checked), 'reviewer');
+        const reviewMessages = await this.turn(active, active.reviewerID, reviewPrompt(active, checked), 'reviewer');
+        // Shown, never interpreted: the reviewer's own words can contradict its structured submission.
+        run.state.reviewerNote = reviewMessages.filter((message) => message.type === 'assistant').flatMap((message) => message.content ?? []).filter((part) => part.type === 'text').map((part) => part.text).join('\n').trim().slice(0, REVIEWER_NOTE_LIMIT) || undefined;
         const reviewed = await scope.snapshot();
         await this.assertSession(active, active.fixerID);
         if (reviewed.index !== active.initial.index) throw new Error('Git index changed during review.');
@@ -201,7 +207,7 @@ export class Engine {
     const stopped = state.phase === 'stopped'
       ? `\nStopped during ${state.stoppedPhase ?? 'an unknown phase'}; findings and partial edits are not verified. Inspect status and changes before starting a new review. Unconfirmed cleanup retains the worktree claim.`
       : '';
-    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${state.maxReviews} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}\nReviewer: ${modelLabel(active.reviewerModel)}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
+    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${state.maxReviews} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}\nReviewer: ${modelLabel(active.reviewerModel)}${state.reviewerID ? `\nReviewer session: ${state.reviewerID}` : ''}${state.reviewerNote ? `\nReviewer note (model text, unverified): ${state.reviewerNote}` : ''}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
   }
 
   ensureRunning(active) {
@@ -249,6 +255,7 @@ export class Engine {
         throw new Error(`${role} turn had an incomplete result or unrecovered tool error: ${name} (${type}).`);
       }
       if (messages.some((message) => message.error || (message.type === 'assistant' && ['length', 'content-filter', 'error', 'unknown'].includes(message.finish)))) throw new Error(`${role} turn had an incomplete result or unrecovered tool error.`);
+      return messages;
     } catch (error) {
       await this.interrupt(active, sessionID);
       throw error;
@@ -277,9 +284,11 @@ export class Engine {
         if ((await active.scope.source({ operation: 'read', path, offset: line, limit: 1 })).startsWith('[No matching')) throw new Error(`Evidence line ${path}:${line} does not exist.`);
       }
     }
-    if (input.complete && active.unreadDiffs.size) {
-      const shown = [...active.unreadDiffs].slice(0, 10).join(', ');
-      throw new Error(`Complete review refused: the diffs of ${active.unreadDiffs.size} changed file(s) were not read to the end (${shown}${active.unreadDiffs.size > 10 ? ', …' : ''}). Read each with review_loop_source operation "diff", or submit complete=false.`);
+    if (input.complete && input.limitations.length) throw new Error('A review that lists coverage limitations is not complete. Resolve them by inspecting more source, or submit complete=false.');
+    if (input.complete && active.uncovered.size) {
+      const shown = [...active.uncovered].slice(0, 10).join(', ');
+      const how = active.oversized ? 'Read each diff to its end with review_loop_source operation "diff"' : 'Open each with review_loop_source operation "read" (or page its "diff" to the end)';
+      throw new Error(`Complete review refused: ${active.uncovered.size} changed file(s) were not inspected (${shown}${active.uncovered.size > 10 ? ', …' : ''}). ${how}, or submit complete=false.`);
     }
     active.run.submitReview(input, { validated: true });
     await active.lease.save(active.run.state);
@@ -301,11 +310,13 @@ export class Engine {
       // Coverage only advances when a page starts exactly where the previous one ended, so skipped pages never count.
       if (input.offset === undefined || input.offset === 1 || input.offset === active.diffCursor.get(input.path)) {
         active.diffCursor.set(input.path, page.next);
-        if (page.complete) active.unreadDiffs.delete(input.path);
+        if (page.complete) active.uncovered.delete(input.path);
       }
       return page.text;
     }
-    return active.scope.source(input);
+    const result = await active.scope.source(input);
+    if (input.operation === 'read' && !active.oversized) active.uncovered.delete(input.path);
+    return result;
   }
 
   async stop(sessionID, reason = 'Cancelled by user.') {

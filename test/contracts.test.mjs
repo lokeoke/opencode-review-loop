@@ -8,11 +8,18 @@ test('submission schema lists introduced_by as required-but-nullable for strict 
   const schema = REVIEW_SCHEMA.properties.issues.items;
   assert.ok(schema.required.includes('introduced_by'));
   assert.ok(schema.properties.introduced_by.anyOf.some((option) => option.type === 'null'));
-  assert.doesNotThrow(() => validateReview({ complete: true, issues: [{ ...issue, introduced_by: null }], resolutions: [] }));
+  assert.doesNotThrow(() => validateReview({ complete: true, limitations: [], issues: [{ ...issue, introduced_by: null }], resolutions: [] }));
 });
 
 test('introduced_by paths use the same worktree-relative validation as finding paths', () => {
   for (const file of ['/etc/passwd', '../x', 'a\\b', '.git/config', 'a//b']) {
-    assert.throws(() => validateReview({ complete: true, issues: [{ ...issue, introduced_by: { file, line: 1, explanation: 'e' } }], resolutions: [] }), /worktree-relative/);
+    assert.throws(() => validateReview({ complete: true, limitations: [], issues: [{ ...issue, introduced_by: { file, line: 1, explanation: 'e' } }], resolutions: [] }), /worktree-relative/);
   }
+});
+
+test('a review must list its coverage limitations, possibly none', () => {
+  assert.throws(() => validateReview({ complete: true, issues: [], resolutions: [] }), /limitations/);
+  assert.throws(() => validateReview({ complete: true, issues: [], resolutions: [], limitations: [''] }), /limitation/);
+  assert.doesNotThrow(() => validateReview({ complete: false, issues: [], resolutions: [], limitations: ['Skipped generated files.'] }));
+  assert.ok(REVIEW_SCHEMA.required.includes('limitations'));
 });

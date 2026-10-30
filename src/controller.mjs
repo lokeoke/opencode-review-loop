@@ -1,4 +1,4 @@
-import { validateFix, validateReview } from './contracts.mjs';
+import { MAX_TEXT, validateFix, validateReview } from './contracts.mjs';
 
 export const MAX_REVIEWS = 4;
 export const BLOCKING = new Set(['blocker', 'major']);
@@ -35,7 +35,8 @@ export class Run {
     this.requirePhase('reviewing');
     if (fingerprint !== this.state.fingerprint) return this.stop('Code changed during review.');
     const result = this.state.submission;
-    if (!result?.complete) return this.stop('Missing or incomplete review.');
+    if (!result) return this.stop('Missing review.');
+    if (!result.complete) return this.stop(`Incomplete review${result.limitations.length ? `: ${result.limitations.join(' ').slice(0, MAX_TEXT)}` : '.'}`);
     const previous = this.state.issues.filter((issue) => BLOCKING.has(issue.severity));
     for (const issue of previous) {
       const resolution = result.resolutions.find((item) => item.id === issue.id);
