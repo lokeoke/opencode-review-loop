@@ -94,3 +94,20 @@ test('assumptions about the outside world are reported but do not make a review 
   assert.equal((await f.engine.status('fixer')).phase, 'passed');
   assert.match(f.reports.at(-1), /Reviewer assumptions \(unverified\): Callers outside this repository pass a trusted role\./);
 });
+
+test('a refused incomplete-coverage submission can be corrected within the same turn', async (t) => {
+  const f = await fixture(t, { autoCover: false });
+  f.setPrompt(async () => {
+    const { id: runId } = f.engine.activeFor('fixer').run.state;
+    const review = { runId, round: 1, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] };
+    await assert.rejects(f.engine.submitReview('reviewer', review, { toolCallID: 'refused' }), /not inspected/);
+    await f.engine.source('reviewer', { operation: 'read', path: 'app.js' });
+    await f.engine.submitReview('reviewer', review, { toolCallID: 'corrected' });
+    f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [
+      { type: 'tool', id: 'refused', name: 'review_loop_submit_review', state: { status: 'error', error: { type: 'unknown', message: 'Complete review refused.' } } },
+      { type: 'tool', id: 'corrected', name: 'review_loop_submit_review', state: { status: 'completed' } },
+    ] }]);
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  assert.equal((await f.engine.status('fixer')).phase, 'passed');
+});

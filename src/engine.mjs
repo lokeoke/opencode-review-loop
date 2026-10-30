@@ -272,24 +272,26 @@ export class Engine {
   async submitReview(sessionID, input, { toolCallID } = {}) {
     const active = this.submission(sessionID, input, 'reviewer');
     await this.assertSession(active, sessionID);
-    try { validateReview(input); }
-    catch (error) {
+    // Every refusal below is input the reviewer can correct and resubmit in the same turn.
+    try {
+      validateReview(input);
+      for (const issue of input.issues) {
+        const previous = active.run.state.issues.some((old) => old.id === issue.id && old.file === issue.file);
+        if (active.changedFiles.has(issue.file) || previous) continue;
+        if (!issue.introduced_by || !active.changedFiles.has(issue.introduced_by.file)) throw new ReviewInputError('An unchanged-file finding needs introduced_by evidence anchored in the current diff.');
+        for (const [path, line] of [[issue.file, issue.line], [issue.introduced_by.file, issue.introduced_by.line]]) {
+          if ((await active.scope.source({ operation: 'read', path, offset: line, limit: 1 })).startsWith('[No matching')) throw new ReviewInputError(`Evidence line ${path}:${line} does not exist.`);
+        }
+      }
+      if (input.complete && input.limitations.length) throw new ReviewInputError('A review that lists coverage limitations is not complete. Resolve them by inspecting more source, or submit complete=false.');
+      if (input.complete && active.uncovered.size) {
+        const shown = [...active.uncovered].slice(0, 10).join(', ');
+        const how = active.oversized ? 'Read each diff to its end with review_loop_source operation "diff"' : 'Open each with review_loop_source operation "read" (or page its "diff" to the end)';
+        throw new ReviewInputError(`Complete review refused: ${active.uncovered.size} changed file(s) were not inspected (${shown}${active.uncovered.size > 10 ? ', …' : ''}). ${how}, or submit complete=false.`);
+      }
+    } catch (error) {
       if (error instanceof ReviewInputError && typeof toolCallID === 'string') active.invalidReviewCalls?.add(toolCallID);
       throw error;
-    }
-    for (const issue of input.issues) {
-      const previous = active.run.state.issues.some((old) => old.id === issue.id && old.file === issue.file);
-      if (active.changedFiles.has(issue.file) || previous) continue;
-      if (!issue.introduced_by || !active.changedFiles.has(issue.introduced_by.file)) throw new Error('An unchanged-file finding needs introduced_by evidence anchored in the current diff.');
-      for (const [path, line] of [[issue.file, issue.line], [issue.introduced_by.file, issue.introduced_by.line]]) {
-        if ((await active.scope.source({ operation: 'read', path, offset: line, limit: 1 })).startsWith('[No matching')) throw new Error(`Evidence line ${path}:${line} does not exist.`);
-      }
-    }
-    if (input.complete && input.limitations.length) throw new Error('A review that lists coverage limitations is not complete. Resolve them by inspecting more source, or submit complete=false.');
-    if (input.complete && active.uncovered.size) {
-      const shown = [...active.uncovered].slice(0, 10).join(', ');
-      const how = active.oversized ? 'Read each diff to its end with review_loop_source operation "diff"' : 'Open each with review_loop_source operation "read" (or page its "diff" to the end)';
-      throw new Error(`Complete review refused: ${active.uncovered.size} changed file(s) were not inspected (${shown}${active.uncovered.size > 10 ? ', …' : ''}). ${how}, or submit complete=false.`);
     }
     active.run.submitReview(input, { validated: true });
     await active.lease.save(active.run.state);
