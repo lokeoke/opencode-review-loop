@@ -10,8 +10,9 @@ const COMMAND_NOT_FOUND = 127;
 
 // OpenCode Desktop starts the service with launchd's minimal PATH, so tools the user installed
 // (node, npm, Homebrew) are missing from checks. Ask the user's own interactive login shell, the way a
-// terminal would see it. `env` prints PATH colon-separated in every shell, fish included; lines before
-// the marker are profile output and are ignored. Resolves undefined when the shell gives no PATH.
+// terminal would see it. `env -0` prints PATH colon-separated in every shell, fish included, with entries
+// NUL-separated so a multi-line value cannot pose as PATH; output before the marker is profile noise.
+// Resolves undefined when the shell gives no PATH.
 function readShellPath({ shell = process.env.SHELL || userInfo().shell || '/bin/sh', timeoutMs = SHELL_PATH_TIMEOUT_MS } = {}) {
   return new Promise((resolve) => {
     let output = '', done = false;
@@ -19,11 +20,11 @@ function readShellPath({ shell = process.env.SHELL || userInfo().shell || '/bin/
       if (done) return;
       done = true;
       clearTimeout(timer);
-      const environment = output.split(PATH_MARKER).slice(1).join(PATH_MARKER).split('\n');
-      resolve(environment.find((line) => line.startsWith('PATH='))?.slice('PATH='.length).trim() || undefined);
+      const environment = output.slice(output.indexOf(PATH_MARKER) + PATH_MARKER.length).trimStart().split('\0');
+      resolve(output.includes(PATH_MARKER) ? environment.find((entry) => entry.startsWith('PATH='))?.slice('PATH='.length) || undefined : undefined);
     };
     let child;
-    try { child = spawn(shell, ['-ilc', `echo ${PATH_MARKER}; /usr/bin/env`], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] }); }
+    try { child = spawn(shell, ['-ilc', `echo ${PATH_MARKER}; /usr/bin/env -0`], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] }); }
     catch { resolve(undefined); return; }
     const timer = setTimeout(() => {
       try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ }
@@ -42,10 +43,14 @@ export async function resolveShellPath({ fallback = process.env.PATH ?? '', ...o
   return mergePath(await readShellPath(options), fallback);
 }
 
-// Cached for the service lifetime once the shell answered; a failed lookup is retried by the next check.
-let shellPath;
-export function checkPath() {
+// Cached for the service lifetime once the shell answered. A failed lookup is retried after a cooldown,
+// so a shell that never answers costs one timeout per cooldown rather than one per check.
+export const SHELL_RETRY_MS = 5 * 60_000;
+let shellPath, failedAt;
+export function checkPath(now = Date.now()) {
+  if (failedAt !== undefined && now - failedAt < SHELL_RETRY_MS) return Promise.resolve(process.env.PATH ?? '');
   shellPath ??= readShellPath().then((path) => {
+    failedAt = path ? undefined : now;
     if (!path) shellPath = undefined;
     return mergePath(path, process.env.PATH ?? '');
   });

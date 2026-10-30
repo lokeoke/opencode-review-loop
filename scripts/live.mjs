@@ -34,6 +34,8 @@ export async function waitForTerminal({ api, store, worktree, sessionID, deadlin
   let lastPhase;
   while (Date.now() < deadline) {
     await delay(2000);
+    // Fails fast if the service died or was replaced; otherwise frozen run state would wait out the deadline.
+    await api('get', `/api/session/${sessionID}`);
     const state = await store.read(worktree);
     if (state && ['passed', 'stopped'].includes(state.phase)) return state;
     if (state) {

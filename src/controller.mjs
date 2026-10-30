@@ -64,6 +64,12 @@ export class Run {
     this.state.phase = blocking || (newMinor && this.state.round < this.state.maxReviews) ? 'fixing' : 'passed';
   }
 
+  // Findings for the next fix pass: every blocking one, plus minor ones not reported in an earlier round.
+  fixTargets() {
+    const earlier = new Set(this.state.history.slice(0, -1).flatMap((entry) => entry.review.issues.map((issue) => issue.id)));
+    return this.state.issues.filter((issue) => BLOCKING.has(issue.severity) || !earlier.has(issue.id));
+  }
+
   submitFix(result) {
     this.requirePhase('fixing');
     if (this.state.fix) throw new Error('Fix already submitted.');

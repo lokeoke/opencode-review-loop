@@ -102,7 +102,10 @@ function summarize(fixtures, runs) {
 }
 
 const options = parseArgs(process.argv.slice(2));
-const fixtures = (await loadFixtures()).filter((fixture) => !options.only || options.only.includes(fixture.name));
+const available = await loadFixtures();
+const unknown = (options.only ?? []).filter((name) => !available.some((fixture) => fixture.name === name));
+if (unknown.length) throw new Error(`Unknown fixture: ${unknown.join(', ')}. Available: ${available.map((fixture) => fixture.name).join(', ')}.`);
+const fixtures = available.filter((fixture) => !options.only || options.only.includes(fixture.name));
 const runners = options.runner === 'both' ? ['plugin', 'claude'] : [options.runner];
 const live = runners.includes('plugin') ? await connectLive() : undefined;
 const startedAt = new Date().toISOString();

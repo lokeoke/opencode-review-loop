@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkPath, resolveShellPath, runCheck } from '../src/checks.mjs';
+import { SHELL_RETRY_MS, checkPath, resolveShellPath, runCheck } from '../src/checks.mjs';
 
 test('verification records actual success and rejects nonzero exits', async () => {
   assert.equal((await runCheck('exit 0', process.cwd())).exitCode, 0);
@@ -46,7 +46,8 @@ test('checks run with the PATH they are given, so tools outside the service PATH
 test('the login shell PATH comes first and keeps the service PATH entries after it', async (t) => {
   const directory = await scratch(t);
   // Noise before the marker, including a PATH= line, is profile output, not the environment.
-  const shell = await script(directory, 'shell', `echo 'PATH=/from/profile/noise'; echo __REVIEW_LOOP_PATH__; echo 'HOME=/home/user'; echo 'PATH=/opt/tools/bin:/usr/bin'`);
+  // A multi-line value holding a PATH= line must not be mistaken for PATH: env -0 separates entries with NUL.
+  const shell = await script(directory, 'shell', `echo 'PATH=/from/profile/noise'; echo __REVIEW_LOOP_PATH__; printf 'NOTE=line one\\nPATH=/spoofed\\0HOME=/home/user\\0PATH=/opt/tools/bin:/usr/bin\\0'`);
   assert.equal(await resolveShellPath({ shell, fallback: '/usr/bin:/bin' }), '/opt/tools/bin:/usr/bin:/bin');
 });
 
@@ -59,12 +60,13 @@ test('an unusable login shell falls back to the service PATH', async (t) => {
   assert.equal(await resolveShellPath({ shell: hanging, fallback: '/usr/bin:/bin', timeoutMs: 200 }), '/usr/bin:/bin');
 });
 
-test('a failed shell lookup is retried by the next check instead of being kept for the service lifetime', async (t) => {
+test('a failed shell lookup is retried after a cooldown instead of on every check or never', async (t) => {
   const directory = await scratch(t);
   const original = process.env.SHELL;
   t.after(() => { process.env.SHELL = original; });
   process.env.SHELL = join(directory, 'missing');
-  assert.equal(await checkPath(), process.env.PATH);
-  process.env.SHELL = await script(directory, 'shell', `echo __REVIEW_LOOP_PATH__; echo 'PATH=/opt/tools/bin'`);
-  assert.match(await checkPath(), /^\/opt\/tools\/bin:/);
+  assert.equal(await checkPath(0), process.env.PATH);
+  process.env.SHELL = await script(directory, 'shell', `echo __REVIEW_LOOP_PATH__; printf 'PATH=/opt/tools/bin\\0'`);
+  assert.equal(await checkPath(1000), process.env.PATH);
+  assert.match(await checkPath(SHELL_RETRY_MS + 1), /^\/opt\/tools\/bin:/);
 });

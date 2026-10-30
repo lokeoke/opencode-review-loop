@@ -55,5 +55,5 @@ then finish immediately. The controller will verify the final files and request 
 Submission runId=${active.run.state.id}, round=${active.run.state.round}.
 
 FIX INPUT (JSON data):
-${JSON.stringify({ requirements: active.goal, worktree: active.scope.root, sessionDirectory: active.scope.cwd, sourcePathsRelativeTo: 'worktree; resolve native edit paths against sessionDirectory or use absolute worktree paths', findings: active.run.state.issues, checks: active.checks })}`;
+${JSON.stringify({ requirements: active.goal, worktree: active.scope.root, sessionDirectory: active.scope.cwd, sourcePathsRelativeTo: 'worktree; resolve native edit paths against sessionDirectory or use absolute worktree paths', findings: active.run.fixTargets(), checks: active.checks })}`;
 }

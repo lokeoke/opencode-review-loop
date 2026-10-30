@@ -150,3 +150,28 @@ test('a minor-only fix pass that leaves the code unchanged passes instead of sto
   blocked.checked('same');
   assert.equal(blocked.state.phase, 'stopped');
 });
+
+test('a minor finding that already had its fix attempt is not sent to the fixer again', () => {
+  const run = new Run({ id: 'run-minor-targets' });
+  run.checked('one');
+  run.submitReview(review([finding, minor]));
+  run.reviewCompleted('one');
+  assert.deepEqual(run.fixTargets().map((issue) => issue.id), ['auth-check', 'empty-input']);
+  run.submitFix({ summary: 'Partial fix.', disputed: [] });
+  run.fixCompleted();
+  run.checked('two');
+  run.submitReview(review([finding, minor], [{ id: 'auth-check', status: 'open', evidence: 'Still unchecked.' }]));
+  run.reviewCompleted('two');
+  assert.equal(run.state.phase, 'stopped');
+  const next = new Run({ id: 'run-minor-targets-2' });
+  next.checked('one');
+  next.submitReview(review([finding, minor]));
+  next.reviewCompleted('one');
+  next.submitFix({ summary: 'Partial fix.', disputed: [] });
+  next.fixCompleted();
+  next.checked('two');
+  next.submitReview(review([{ ...finding, id: 'auth-check-2' }, minor], [{ id: 'auth-check', status: 'fixed', evidence: 'Owner checked.' }]));
+  next.reviewCompleted('two');
+  assert.equal(next.state.phase, 'fixing');
+  assert.deepEqual(next.fixTargets().map((issue) => issue.id), ['auth-check-2']);
+});
