@@ -101,7 +101,7 @@ State stays outside repositories under `~/.local/state/opencode-review-loop` (or
 
 Archives retain local paths, model/session identities, optional context, findings, fix summaries, approved check commands/results, progress and fingerprints—not full diffs or check output. OpenCode's own sessions retain model prompts and tool results. Retention is manual; inspect before sharing. Provider usage/data policies still apply.
 
-Crashes/reloads never resume execution automatically. Failed interruption or process cleanup retains the claim. Retry stop from the owning session when possible. For a dead runtime, first inspect the owner and verify **all** old run/check processes stopped, then:
+Crashes/reloads never resume execution automatically. A recorded stop includes the phase where it stopped; older records may not have it. Findings and partial edits from a stopped run are not verified: inspect status and changes before starting a new run with the normal scope and check authorization. An unload report does not establish what triggered the unload. A crash may leave only stale state and a claim rather than a terminal report. Failed interruption or process cleanup retains the claim. Retry stop from the owning session when possible. For a dead runtime, first inspect the owner and verify **all** old run/check processes stopped, then:
 
 ```sh
 node scripts/recover.mjs /path/to/project RUN_ID --confirm-processes-stopped
@@ -121,7 +121,7 @@ npm test
 node scripts/smoke.mjs --live
 ```
 
-The smoke introduces an anonymous-access defect missed by baseline tests and runs goal-free review → fix → checks → re-review. It connects to the existing authenticated local service and refuses service-identity changes; it never invokes CLI discovery that could replace a differently versioned service.
+The smoke introduces an anonymous-access defect missed by baseline tests and runs goal-free review → fix → checks → re-review. It connects to the existing authenticated local service and refuses service-identity changes; it never invokes CLI discovery that could replace a differently versioned service. Before running, confirm that service uses the candidate build and that a reload will not interrupt another run. A no-execution preview checks for this version's cancellation warning, but that marker alone cannot prove the exact build identity. The smoke checks the reviewer transcript for completed source and submission calls; if either is missing, it reports an inconclusive compatibility result rather than a pass.
 
 See [ADRs](docs/adr/README.md), [testing](docs/testing.md), and [review dispositions](docs/review-feedback.md). No license has been selected yet.
 

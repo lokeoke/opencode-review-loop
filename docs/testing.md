@@ -23,6 +23,10 @@ The connected service used for live validation reported OpenCode 2.2.0. An insta
 
 Regression coverage now includes permission API allow/ask/deny/missing behavior, command quoting, bare-start preview/approval invalidation, symlink aliases/dangling targets, detached HEAD, concurrent release/late saves, live/dead-owner recovery, disposal during startup, cancelled reviewer creation, process signalling failures and harmless unknown-tool-name recovery. See [review dispositions](review-feedback.md).
 
+The live smoke checks the no-execution candidate preview and requires completed reviewer source and submission calls in the transcript. Absence of either is inconclusive, since model behavior varies. The marker is not a build hash; independently confirm the service is running the candidate. A fake external HTTP service exercises the smoke's evidence handling without model usage.
+
+On 2026-10-30, the authenticated OpenCode 2.2.2 service completed the smoke in two review rounds with `github-copilot/claude-sonnet-5.5` as reviewer and `github-copilot/gpt-6.1-sol` as fixer; the reviewer transcript recorded successful source and submission calls. An earlier smoke stopped after a rejected review input followed by a successful resubmission; the host labelled the input error `unknown`. A regression now identifies locally recorded validation failures by tool-call ID, while unrelated unknown errors still stop the run. The later live run did not repeat that malformed submission, so that retry case is proven by deterministic tests, not by the live run.
+
 ## Latest proof
 
 - 55 deterministic tests passed, including native-adapter output, script-definition approval, launch-definition mutation guards, unchanged-file causal findings, cached-process signalling refusal, bounded progress and large-binary diagnostics.

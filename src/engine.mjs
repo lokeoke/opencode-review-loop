@@ -7,9 +7,10 @@ import { selectReviewer } from './options.mjs';
 import { runCheck } from './checks.mjs';
 import { fixPrompt, reviewPrompt } from './prompts.mjs';
 import { checkPolicyFingerprint } from './check-policy.mjs';
-import { validateReview } from './contracts.mjs';
+import { ReviewInputError, validateReview } from './contracts.mjs';
 import { DENIAL_PREFIX } from './security.mjs';
 import { scopeKind } from './scope.mjs';
+import { INPUT_WARNING } from './command.mjs';
 
 export const PHASE_TIMEOUT_MS = 10 * 60_000;
 export const RUN_TIMEOUT_MS = 45 * 60_000;
@@ -18,6 +19,8 @@ export const ALREADY_RUNNING = 'A review loop is already running in this session
 export const MAX_PROGRESS_EVENTS = 64;
 const MAX_PROGRESS_TEXT = 8192;
 const MAX_DENIALS = 32;
+const DIAGNOSTIC_TOOLS = new Set(['review_loop_source', 'review_loop_submit_review', 'review_loop_submit_fix', 'patch', 'edit', 'write']);
+const DIAGNOSTIC_ERROR_TYPES = new Set(['validation', 'invalid_input', 'tool.execution', 'permission.rejected', 'unknown']);
 // Locations load separate plugin instances; session guards must follow a moved session.
 const ACTIVE_RUNS = Symbol.for('opencode-review-loop.active.v1');
 globalThis[ACTIVE_RUNS] ??= new Map();
@@ -114,7 +117,7 @@ export class Engine {
       active.initial = await scope.snapshot();
       run.state.files = active.initial.files;
       if (!active.initial.files.length) throw new Error('No changes against the selected base.');
-      await this.progress(active, `Scope: ${active.initial.files.length} files against ${scope.baseSha}. Reviewer: ${active.reviewerModel.providerID}/${active.reviewerModel.id}.`);
+      await this.progress(active, `Scope: ${active.initial.files.length} files against ${scope.baseSha}. Reviewer: ${active.reviewerModel.providerID}/${active.reviewerModel.id}.\n${INPUT_WARNING}`);
       if (!active.checks?.length) throw new Error('Checks need approval. Re-run with explicit --check commands (for example --check "npm test"). No checks or model calls were executed.');
       while (!run.terminal) {
         this.ensureRunning(active);
@@ -194,7 +197,10 @@ export class Engine {
 
   describe(active) {
     const state = active.run.state;
-    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${state.maxReviews} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}\nReviewer: ${active.reviewerModel.providerID}/${active.reviewerModel.id}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
+    const stopped = state.phase === 'stopped'
+      ? `\nStopped during ${state.stoppedPhase ?? 'an unknown phase'}; findings and partial edits are not verified. Inspect status and changes before starting a new review. Unconfirmed cleanup retains the worktree claim.`
+      : '';
+    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${state.maxReviews} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}\nReviewer: ${active.reviewerModel.providerID}/${active.reviewerModel.id}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
   }
 
   ensureRunning(active) {
@@ -215,6 +221,7 @@ export class Engine {
     const signal = AbortSignal.any([active.abort.signal, AbortSignal.timeout(PHASE_TIMEOUT_MS)]);
     const before = await this.ctx.session.context({ sessionID }, { signal });
     active.turnSessionID = sessionID;
+    active.invalidReviewCalls = new Set();
     active.scope.invalidate();
     try {
       await this.ctx.session.prompt({ sessionID, text, metadata: { reviewLoop: { id: active.run.state.id, round: active.run.state.round, role } }, delivery: 'queue' }, { signal });
@@ -227,18 +234,24 @@ export class Engine {
       const tools = messages.flatMap((message) => message.content ?? []).filter((part) => part.type === 'tool');
       const recovered = (part) => {
         const error = part.state?.error;
-        const invalidInput = ['validation', 'invalid_input'].includes(error?.type);
+        const invalidInput = ['validation', 'invalid_input'].includes(error?.type) || (part.name === 'review_loop_submit_review' && active.invalidReviewCalls.has(part.id));
         const unknownTool = error?.type === 'tool.execution' && /^No tool named "[a-zA-Z0-9_-]+" is currently available\./.test(error.message ?? '');
         const submission = role === 'reviewer' ? 'review_loop_submit_review' : 'review_loop_submit_fix';
         // A guard denial executed nothing; the fixer corrected course if a later same-tool call completed.
         const guardDenial = error?.type === 'permission.rejected' && (error.message ?? '').startsWith(DENIAL_PREFIX);
         return (invalidInput || unknownTool || guardDenial) && tools.some((later) => later.name === (unknownTool ? submission : part.name) && later.state?.status === 'completed' && tools.indexOf(later) > tools.indexOf(part));
       };
-      if (messages.some((message) => message.error || (message.type === 'assistant' && ['length', 'content-filter', 'error', 'unknown'].includes(message.finish))) || tools.some((part) => part.state?.status === 'error' && !recovered(part))) throw new Error(`${role} turn had an incomplete result or unrecovered tool error.`);
+      const failedTool = tools.find((part) => part.state?.status === 'error' && !recovered(part));
+      if (failedTool) {
+        const name = DIAGNOSTIC_TOOLS.has(failedTool.name) ? failedTool.name : 'other tool';
+        const type = DIAGNOSTIC_ERROR_TYPES.has(failedTool.state.error?.type) ? failedTool.state.error.type : 'unknown';
+        throw new Error(`${role} turn had an incomplete result or unrecovered tool error: ${name} (${type}).`);
+      }
+      if (messages.some((message) => message.error || (message.type === 'assistant' && ['length', 'content-filter', 'error', 'unknown'].includes(message.finish)))) throw new Error(`${role} turn had an incomplete result or unrecovered tool error.`);
     } catch (error) {
       await this.interrupt(active, sessionID);
       throw error;
-    } finally { active.turnSessionID = undefined; }
+    } finally { active.turnSessionID = undefined; active.invalidReviewCalls = undefined; }
   }
 
   submission(sessionID, input, role) {
@@ -247,10 +260,14 @@ export class Engine {
     return active;
   }
 
-  async submitReview(sessionID, input) {
+  async submitReview(sessionID, input, { toolCallID } = {}) {
     const active = this.submission(sessionID, input, 'reviewer');
     await this.assertSession(active, sessionID);
-    validateReview(input);
+    try { validateReview(input); }
+    catch (error) {
+      if (error instanceof ReviewInputError && typeof toolCallID === 'string') active.invalidReviewCalls?.add(toolCallID);
+      throw error;
+    }
     for (const issue of input.issues) {
       const previous = active.run.state.issues.some((old) => old.id === issue.id && old.file === issue.file);
       if (active.changedFiles.has(issue.file) || previous) continue;

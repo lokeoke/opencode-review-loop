@@ -20,6 +20,38 @@ test('a nonexistent-tool validation error can recover through a later valid subm
   assert.equal((await f.engine.status('fixer')).phase, 'passed');
 });
 
+test('a rejected review input can be corrected even when the host labels the error unknown', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async () => {
+    const active = f.engine.activeFor('fixer');
+    const review = { runId: active.run.state.id, round: 1, complete: true, issues: [], resolutions: [] };
+    await assert.rejects(f.engine.submitReview('reviewer', { ...review, resolutions: null }, { toolCallID: 'invalid' }), /Invalid resolutions/);
+    await f.engine.submitReview('reviewer', review, { toolCallID: 'corrected' });
+    f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [
+      { type: 'tool', id: 'invalid', name: 'review_loop_submit_review', state: { status: 'error', error: { type: 'unknown', message: 'Invalid resolutions.' } } },
+      { type: 'tool', id: 'corrected', name: 'review_loop_submit_review', state: { status: 'completed' } },
+    ] }]);
+  });
+  const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
+  await task.done;
+  assert.equal((await f.engine.status('fixer')).phase, 'passed');
+});
+
+test('an unknown tool error is not excused merely because a later submission succeeds', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async () => {
+    const active = f.engine.activeFor('fixer');
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, issues: [], resolutions: [] });
+    f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [
+      { type: 'tool', id: 'not-recorded', name: 'review_loop_submit_review', state: { status: 'error', error: { type: 'unknown', message: 'Invalid resolutions.' } } },
+      { type: 'tool', id: 'corrected', name: 'review_loop_submit_review', state: { status: 'completed' } },
+    ] }]);
+  });
+  const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
+  await task.done;
+  assert.equal((await f.engine.status('fixer')).phase, 'stopped');
+});
+
 test('a prior blocker can remain open after its file is reverted out of the diff', async (t) => {
   const f = await fixture(t);
   f.setPrompt(async (input) => {
@@ -82,6 +114,51 @@ test('a guard denial with no successful retry still fails the turn closed', asyn
   const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
   await task.done;
   assert.equal((await f.engine.status('fixer')).phase, 'stopped');
+});
+
+test('a failed reviewer tool is identified without exposing its raw error', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async () => {
+    f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [
+      { type: 'tool', name: 'review_loop_source', state: { status: 'error', error: { type: 'unknown', message: 'private-secret-value' } } },
+    ] }]);
+  });
+  const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
+  await task.done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.phase, 'stopped');
+  assert.equal(state.stoppedPhase, 'reviewing');
+  assert.match(state.reason, /review_loop_source.*unknown/i);
+  assert.doesNotMatch(JSON.stringify(state), /private-secret-value/);
+  assert.match(f.reports.at(-1), /review_loop_source.*unknown/i);
+});
+
+test('plugin unload while fixing preserves findings and warns that edits are unverified', async (t) => {
+  const f = await fixture(t);
+  let fixing;
+  let unblock;
+  const entered = new Promise((resolve) => { fixing = resolve; });
+  f.setPrompt(async (input) => {
+    if (input.sessionID === 'fixer') {
+      const blocked = new Promise((resolve) => { unblock = resolve; });
+      fixing();
+      return blocked;
+    }
+    const active = f.engine.activeFor('fixer');
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, issues: [
+      { id: 'value', severity: 'major', file: 'app.js', line: 1, problem: 'Incorrect value.', failure_scenario: 'Callers receive the wrong value.', suggested_fix: 'Correct the value.' },
+    ], resolutions: [] });
+  });
+  f.ctx.session.interrupt = async () => { unblock?.(); return { interrupted: true }; };
+  const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
+  await entered;
+  await f.engine.dispose();
+  await task.done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.stoppedPhase, 'fixing');
+  assert.match(state.reason, /Plugin unloaded/);
+  assert.equal(state.issues[0].id, 'value');
+  assert.match(f.reports.at(-1), /partial edits are not verified/i);
 });
 
 test('unchanged-file evidence must point at existing lines', async (t) => {
