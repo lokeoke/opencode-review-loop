@@ -1,4 +1,4 @@
-import { validateFix, validateReview } from './contracts.mjs';
+import { MAX_TEXT, validateFix, validateReview } from './contracts.mjs';
 
 export const MAX_REVIEWS = 4;
 export const BLOCKING = new Set(['blocker', 'major']);
@@ -17,6 +17,13 @@ export class Run {
 
   checked(fingerprint) {
     this.requirePhase('checking');
+    // Code unchanged since a review with no blocking findings (a minor fix pass that edited nothing): that
+    // review and the checks just run on the same code stand, so the run passes instead of looping.
+    const last = this.state.history.at(-1);
+    if (last?.fingerprint === fingerprint && !last.review.issues.some((issue) => BLOCKING.has(issue.severity))) {
+      this.state.phase = 'passed';
+      return;
+    }
     if (this.state.history.some((entry) => entry.fingerprint === fingerprint)) return this.stop('No code progress or fix/revert oscillation.');
     this.state.fingerprint = fingerprint;
     this.state.phase = 'reviewing';
@@ -35,7 +42,8 @@ export class Run {
     this.requirePhase('reviewing');
     if (fingerprint !== this.state.fingerprint) return this.stop('Code changed during review.');
     const result = this.state.submission;
-    if (!result?.complete) return this.stop('Missing or incomplete review.');
+    if (!result) return this.stop('Missing review.');
+    if (!result.complete) return this.stop(`Incomplete review${result.limitations.length ? `: ${result.limitations.join(' ').slice(0, MAX_TEXT)}` : '.'}`);
     const previous = this.state.issues.filter((issue) => BLOCKING.has(issue.severity));
     for (const issue of previous) {
       const resolution = result.resolutions.find((item) => item.id === issue.id);
@@ -45,11 +53,21 @@ export class Run {
     }
     const blockingIds = (issues) => issues.filter((issue) => BLOCKING.has(issue.severity)).map((issue) => issue.id).sort().join(',');
     const repeated = previous.length && blockingIds(previous) === blockingIds(result.issues);
+    // Minor findings get exactly one fix attempt: a minor already reported in an earlier round never holds the run.
+    const seen = new Set(this.state.history.flatMap((entry) => entry.review.issues.map((issue) => issue.id)));
+    const newMinor = result.issues.some((issue) => !BLOCKING.has(issue.severity) && !seen.has(issue.id));
     this.state.issues = result.issues;
     this.state.history.push({ round: this.state.round, fingerprint, review: result });
     if (repeated) return this.stop('No progress: the same blocking findings remain.');
     if (blockingIds(result.issues) && this.state.round >= this.state.maxReviews) return this.stop('Review limit reached with blocking findings.');
-    this.state.phase = result.issues.some((issue) => BLOCKING.has(issue.severity)) ? 'fixing' : 'passed';
+    const blocking = result.issues.some((issue) => BLOCKING.has(issue.severity));
+    this.state.phase = blocking || (newMinor && this.state.round < this.state.maxReviews) ? 'fixing' : 'passed';
+  }
+
+  // Findings for the next fix pass: every blocking one, plus minor ones not reported in an earlier round.
+  fixTargets() {
+    const earlier = new Set(this.state.history.slice(0, -1).flatMap((entry) => entry.review.issues.map((issue) => issue.id)));
+    return this.state.issues.filter((issue) => BLOCKING.has(issue.severity) || !earlier.has(issue.id));
   }
 
   submitFix(result) {
@@ -60,7 +78,10 @@ export class Run {
 
   fixCompleted() {
     this.requirePhase('fixing');
-    if (!this.state.fix || this.state.fix.disputed.length) return this.stop('Fix missing or findings disputed; human decision needed.');
+    if (!this.state.fix) return this.stop('Fix missing; human decision needed.');
+    // A disputed minor finding is recorded for the report; a disputed blocker needs a human.
+    const blockingIds = new Set(this.state.issues.filter((issue) => BLOCKING.has(issue.severity)).map((issue) => issue.id));
+    if (this.state.fix.disputed.some((id) => blockingIds.has(id))) return this.stop('Blocking findings disputed; human decision needed.');
     this.state.history.at(-1).fix = this.state.fix;
     this.state.phase = 'checking';
   }

@@ -1,0 +1,1777 @@
+{
+  "startedAt": "2026-10-30T11:18:30.654Z",
+  "options": {
+    "runner": "both",
+    "runs": 3,
+    "fixer": "gpt-6.1-sol",
+    "claudePrompt": "Review these code changes for correctness, security, regression and test-quality defects. Report only concrete defects with a failure scenario."
+  },
+  "runs": [
+    {
+      "fixture": "auth-bypass",
+      "runner": "plugin",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-auth-bypass-kZS8X5",
+      "durationMs": 59274,
+      "outcome": "passed",
+      "rounds": 2,
+      "complete": true,
+      "findings": [
+        {
+          "id": "auth-bypass-empty-user",
+          "severity": "blocker",
+          "file": "access.mjs",
+          "line": 6,
+          "problem": "`!userId ||` makes canDelete return true for any missing or empty userId, regardless of owner. The old code returned false in that case. This is an authorization bypass.",
+          "failure_scenario": "An unauthenticated request calls canDelete(undefined, 'owner') or canDelete('', 'owner'). It returns true, so an anonymous caller can delete another user's record.",
+          "suggested_fix": "Use `return userId === ownerId;` after the admin check. If anonymous callers must be rejected explicitly, use `Boolean(userId) && userId === ownerId`. Add a test that canDelete(undefined, 'owner') is false.",
+          "introduced_by": null
+        }
+      ],
+      "fixRan": true,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e7377816bffefrQVzMH19LVIJ4",
+      "fixerSession": "ses_e73779a8dffeWhmj0aK3niJoO0",
+      "score": {
+        "caught": [
+          "anonymous-delete"
+        ],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "auth-bypass",
+      "runner": "plugin",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-auth-bypass-y4UwWY",
+      "durationMs": 63291,
+      "outcome": "passed",
+      "rounds": 2,
+      "complete": true,
+      "findings": [
+        {
+          "id": "auth-bypass-anon",
+          "severity": "blocker",
+          "file": "access.mjs",
+          "line": 6,
+          "problem": "`!userId ||` makes canDelete return true whenever userId is falsy (undefined, null, empty string). This is an authorization bypass unrelated to the admin feature.",
+          "failure_scenario": "An unauthenticated caller, or a handler with a missing session user, calls canDelete(undefined, 'owner') and gets true, so it can delete any record. The old code returned false.",
+          "suggested_fix": "Use `return Boolean(userId) && userId === ownerId;`, or just `return userId === ownerId;`. Add a test that canDelete(undefined, 'owner') is false.",
+          "introduced_by": null
+        }
+      ],
+      "fixRan": true,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e73769441ffe2s2OyKDwKY2DE5",
+      "fixerSession": "ses_e7376aef6ffeP4lIphgwzOwX5Q",
+      "score": {
+        "caught": [
+          "anonymous-delete"
+        ],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "auth-bypass",
+      "runner": "plugin",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-auth-bypass-iWTDeo",
+      "durationMs": 62679,
+      "outcome": "passed",
+      "rounds": 2,
+      "complete": true,
+      "findings": [
+        {
+          "id": "auth-bypass-falsy-user",
+          "severity": "blocker",
+          "file": "access.mjs",
+          "line": 6,
+          "problem": "`!userId ||` makes canDelete return true for any missing/empty userId, so unauthenticated callers are authorized to delete any record. This is not part of the stated intent (owners and admins only).",
+          "failure_scenario": "An unauthenticated request calls canDelete(undefined, 'owner') or canDelete(null, 'owner') or canDelete('', 'owner') and gets true, so anyone can delete anyone's records.",
+          "suggested_fix": "Use `return userId === ownerId;`. If anonymous users must be rejected explicitly, use `return Boolean(userId) && userId === ownerId;`. Add tests for undefined, null and empty userId.",
+          "introduced_by": null
+        }
+      ],
+      "fixRan": true,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e73759dcaffelSeB1rFvZDMAK2",
+      "fixerSession": "ses_e7375b4ceffetG6PJpjsrXdn6l",
+      "score": {
+        "caught": [
+          "anonymous-delete"
+        ],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "auth-bypass",
+      "runner": "claude",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-auth-bypass-saBb3h",
+      "durationMs": 25937,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "access.mjs",
+          "line": 7,
+          "severity": "blocker",
+          "problem": "`!userId ||` makes canDelete return true for a missing/empty userId (e.g. canDelete(undefined, 'owner')), so an unauthenticated caller can delete any record. Authorization bypass; original strict equality did not allow this."
+        },
+        {
+          "file": "verify.mjs",
+          "line": 5,
+          "severity": "minor",
+          "problem": "Tests cover only the admin path. No assertion for anonymous/missing userId or a non-admin role, so the bypass in canDelete goes undetected."
+        }
+      ],
+      "costUsd": 0.15050779999999997,
+      "turns": 3,
+      "claudeSession": "600940d2-5ac6-4428-8e99-cfbb43ba9b12",
+      "score": {
+        "caught": [],
+        "missed": [
+          "anonymous-delete"
+        ],
+        "unmatched": [
+          {
+            "file": "access.mjs",
+            "line": 7,
+            "severity": "blocker",
+            "problem": "`!userId ||` makes canDelete return true for a missing/empty userId (e.g. canDelete(undefined, 'owner')), so an unauthenticated caller can delete any record. Authorization bypass; original strict equality did not allow this."
+          },
+          {
+            "file": "verify.mjs",
+            "line": 5,
+            "severity": "minor",
+            "problem": "Tests cover only the admin path. No assertion for anonymous/missing userId or a non-admin role, so the bypass in canDelete goes undetected."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "auth-bypass",
+      "runner": "claude",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-auth-bypass-7wflWi",
+      "durationMs": 22979,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "access.mjs",
+          "line": 6,
+          "severity": "blocker",
+          "problem": "`!userId ||` makes canDelete return true for any falsy userId (undefined/null/''), so an unauthenticated caller can delete any record. Previously `canDelete(undefined,'owner')` was false. Fix: `return userId === ownerId` (and require truthy userId)."
+        },
+        {
+          "file": "verify.mjs",
+          "line": 5,
+          "severity": "minor",
+          "problem": "Tests cover only the admin happy path. No negative test for anonymous/falsy userId, non-admin role strings, or an admin who is also the owner, so the auth bypass in access.mjs goes undetected."
+        }
+      ],
+      "costUsd": 0.15021649999999998,
+      "turns": 4,
+      "claudeSession": "7dfc6474-21e1-4a4a-8f80-ec224181eb91",
+      "score": {
+        "caught": [
+          "anonymous-delete"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "verify.mjs",
+            "line": 5,
+            "severity": "minor",
+            "problem": "Tests cover only the admin happy path. No negative test for anonymous/falsy userId, non-admin role strings, or an admin who is also the owner, so the auth bypass in access.mjs goes undetected."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "auth-bypass",
+      "runner": "claude",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-auth-bypass-XHD5y7",
+      "durationMs": 25924,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "access.mjs",
+          "line": 6,
+          "severity": "blocker",
+          "problem": "`!userId ||` lets any falsy userId (undefined/null/'') delete any record, bypassing the owner check. Failure: canDelete(undefined,'owner') returns true, so an unauthenticated request can delete anyone's data."
+        },
+        {
+          "file": "access.mjs",
+          "line": 5,
+          "severity": "major",
+          "problem": "`role` is an unvalidated caller-supplied argument and 'admin' grants unconditional delete. If it is derived from request input rather than a trusted server-side session, any user can escalate to admin."
+        },
+        {
+          "file": "verify.mjs",
+          "line": 5,
+          "severity": "minor",
+          "problem": "No tests for missing userId or non-admin roles; the auth bypass above would go undetected."
+        }
+      ],
+      "costUsd": 0.14940070000000003,
+      "turns": 4,
+      "claudeSession": "afd8cadf-c756-4037-99c4-18446a4cfffb",
+      "score": {
+        "caught": [
+          "anonymous-delete"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "verify.mjs",
+            "line": 5,
+            "severity": "minor",
+            "problem": "No tests for missing userId or non-admin roles; the auth bypass above would go undetected."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "caller-break",
+      "runner": "plugin",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-caller-break-z5vtJc",
+      "durationMs": 69053,
+      "outcome": "stopped",
+      "reason": "fixer turn had an incomplete result or unrecovered tool error: review_loop_source (unknown).",
+      "rounds": 1,
+      "complete": true,
+      "findings": [
+        {
+          "id": "report-caller-break",
+          "severity": "blocker",
+          "file": "report.mjs",
+          "line": 5,
+          "problem": "report.mjs still calls formatPrice(total) with a bare number. The new signature destructures an object, so the call no longer matches it.",
+          "failure_scenario": "formatPrice(1999) destructures a Number, so cents is undefined. The output is 'Total: $NaN'. An unknown currency would also print 'undefined' as the symbol.",
+          "suggested_fix": "Update report.mjs to call formatPrice({ cents: total }), or keep backward compatibility in formatPrice. Consider validating the currency too.",
+          "introduced_by": {
+            "file": "lib/format.mjs",
+            "line": 3,
+            "explanation": "The signature changed from a positional number to an object, and the existing caller in report.mjs was not updated."
+          }
+        }
+      ],
+      "fixRan": true,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e73736dfbffeD86PXRFzNoKrh1",
+      "fixerSession": "ses_e73738fccffeHCtBn358QkgTRG",
+      "score": {
+        "caught": [
+          "stale-caller"
+        ],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "caller-break",
+      "runner": "plugin",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-caller-break-6zOTvF",
+      "durationMs": 92371,
+      "outcome": "passed",
+      "rounds": 2,
+      "complete": true,
+      "findings": [
+        {
+          "id": "report-caller-break",
+          "severity": "major",
+          "file": "report.mjs",
+          "line": 5,
+          "problem": "report.mjs still calls formatPrice(total) with a number. The new signature destructures an object, so a number argument gives cents undefined.",
+          "failure_scenario": "formatPrice(1999) reads cents and currency from a Number, so cents is undefined and the result is '$NaN'. The report prints 'Total: $NaN'. verify.mjs does not cover report.mjs, so the break goes unnoticed.",
+          "suggested_fix": "Update report.mjs to call formatPrice({ cents: total }). Alternatively, keep backward compatibility for numeric arguments.",
+          "introduced_by": {
+            "file": "lib/format.mjs",
+            "line": 3,
+            "explanation": "The signature changed from a positional cents argument to an options object, but the existing caller in report.mjs was not updated."
+          }
+        }
+      ],
+      "fixRan": true,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e73724971ffeUIWiykKQjapqzp",
+      "fixerSession": "ses_e73727ed0ffeBFf5fEU2tZ8RDW",
+      "score": {
+        "caught": [
+          "stale-caller"
+        ],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "caller-break",
+      "runner": "plugin",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-caller-break-123PIY",
+      "durationMs": 67798,
+      "outcome": "passed",
+      "rounds": 2,
+      "complete": true,
+      "findings": [
+        {
+          "failure_scenario": "Destructuring a number gives cents === undefined, so the output is 'Total: $NaN'. For example, formatPrice(1999) returns '$NaN' instead of '$19.99'. verify.mjs does not exercise report.mjs, so the test still passes.",
+          "file": "report.mjs",
+          "id": "report-caller-break",
+          "introduced_by": {
+            "explanation": "The signature changed from a numeric argument to an object, and report.mjs was not updated.",
+            "file": "lib/format.mjs",
+            "line": 3
+          },
+          "line": 5,
+          "problem": "report.mjs still calls formatPrice(total) with a number. The new signature destructures an object, so the call no longer matches.",
+          "severity": "major",
+          "suggested_fix": "Change the call to formatPrice({ cents: total }), or keep backward compatibility. Add a test for report.mjs."
+        }
+      ],
+      "fixRan": true,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e7370ebf6ffecNsg0I9i4gqqo7",
+      "fixerSession": "ses_e7371104affenppfsIcOhQ3S5h",
+      "score": {
+        "caught": [
+          "stale-caller"
+        ],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "caller-break",
+      "runner": "claude",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-caller-break-bqb1Xl",
+      "durationMs": 32574,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "report.mjs",
+          "line": 5,
+          "severity": "blocker",
+          "problem": "Caller still passes a bare number to formatPrice, which now expects {cents, currency}. Destructuring a number gives cents undefined, so summary() outputs 'Total: $NaN'. Fix: formatPrice({ cents: total })."
+        },
+        {
+          "file": "lib/format.mjs",
+          "line": 4,
+          "severity": "minor",
+          "problem": "An unsupported currency code (e.g. 'GBP') gives SYMBOLS[currency] === undefined, so the output is 'undefined1.00'. Throw on unknown currency, or fall back to the code."
+        }
+      ],
+      "costUsd": 0.17608490000000004,
+      "turns": 5,
+      "claudeSession": "e2616a47-7cc6-40f7-8803-56d473b5599d",
+      "score": {
+        "caught": [
+          "stale-caller"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "lib/format.mjs",
+            "line": 4,
+            "severity": "minor",
+            "problem": "An unsupported currency code (e.g. 'GBP') gives SYMBOLS[currency] === undefined, so the output is 'undefined1.00'. Throw on unknown currency, or fall back to the code."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "caller-break",
+      "runner": "claude",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-caller-break-myRmnQ",
+      "durationMs": 32657,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "report.mjs",
+          "line": 5,
+          "severity": "blocker",
+          "problem": "formatPrice signature changed to an object argument but summary() still passes a bare number. cents is undefined, so the output is 'Total: $NaN'. verify.mjs does not cover report.mjs, so the break goes unnoticed."
+        },
+        {
+          "file": "lib/format.mjs",
+          "line": 4,
+          "severity": "minor",
+          "problem": "A currency not in SYMBOLS (e.g. 'GBP') gives the symbol 'undefined', so the output is 'undefined5.00'. There is no validation or fallback."
+        }
+      ],
+      "costUsd": 0.17624410000000001,
+      "turns": 5,
+      "claudeSession": "7f9f44e5-25a4-4248-b0c0-ef5d46e5a857",
+      "score": {
+        "caught": [
+          "stale-caller"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "lib/format.mjs",
+            "line": 4,
+            "severity": "minor",
+            "problem": "A currency not in SYMBOLS (e.g. 'GBP') gives the symbol 'undefined', so the output is 'undefined5.00'. There is no validation or fallback."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "caller-break",
+      "runner": "claude",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-caller-break-Y5AiNo",
+      "durationMs": 30956,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "report.mjs",
+          "line": 5,
+          "severity": "blocker",
+          "problem": "formatPrice signature changed from a number to an object, but this caller still passes `total` as a number. `cents` is destructured as undefined, so summary() returns 'Total: $NaN'. verify.mjs does not exercise summary(), so the break goes unnoticed."
+        },
+        {
+          "file": "lib/format.mjs",
+          "line": 4,
+          "severity": "minor",
+          "problem": "SYMBOLS[currency] is undefined for any currency not in the map, for example formatPrice({cents: 100, currency: 'GBP'}). The result is the string 'undefined1.00' instead of an error."
+        }
+      ],
+      "costUsd": 0.1771685,
+      "turns": 6,
+      "claudeSession": "30d2d6d4-46ca-4c57-8201-f5b9a0cb6e3d",
+      "score": {
+        "caught": [
+          "stale-caller"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "lib/format.mjs",
+            "line": 4,
+            "severity": "minor",
+            "problem": "SYMBOLS[currency] is undefined for any currency not in the map, for example formatPrice({cents: 100, currency: 'GBP'}). The result is the string 'undefined1.00' instead of an error."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "clean-feature",
+      "runner": "plugin",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-clean-feature-nAYOxa",
+      "durationMs": 32644,
+      "outcome": "passed",
+      "rounds": 1,
+      "complete": true,
+      "findings": [],
+      "fixRan": false,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e736e5804ffeK4fXIeMDFWSjxT",
+      "fixerSession": "ses_e736e7e1fffegFgw5576SHpEe3",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "clean-feature",
+      "runner": "plugin",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-clean-feature-ZxjPUV",
+      "durationMs": 33035,
+      "outcome": "passed",
+      "rounds": 1,
+      "complete": true,
+      "findings": [],
+      "fixRan": false,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e736dba15ffeK4pZykhfqxT3g7",
+      "fixerSession": "ses_e736dfbc0ffe4j06J4YwYr2M8s",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "clean-feature",
+      "runner": "plugin",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-clean-feature-j0MBoh",
+      "durationMs": 26379,
+      "outcome": "passed",
+      "rounds": 1,
+      "complete": true,
+      "findings": [],
+      "fixRan": false,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e736d5030ffer4tPwDOlKDSdr4",
+      "fixerSession": "ses_e736d7722ffeQHnefglgntq4MD",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "clean-feature",
+      "runner": "claude",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-clean-feature-0gfom2",
+      "durationMs": 26408,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "slug.mjs",
+          "line": 3,
+          "severity": "minor",
+          "problem": "maxLength is not validated. slice(0, maxLength) treats a negative value as an offset from the end, so slugify('hello-world', {maxLength: -1}) returns 'hello-worl'. null and NaN silently return ''. verify.mjs has no test for these inputs."
+        }
+      ],
+      "costUsd": 0.14989010000000003,
+      "turns": 4,
+      "claudeSession": "2a8683b0-4a3d-47d7-ac98-5005adfd84d0",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "slug.mjs",
+            "line": 3,
+            "severity": "minor",
+            "problem": "maxLength is not validated. slice(0, maxLength) treats a negative value as an offset from the end, so slugify('hello-world', {maxLength: -1}) returns 'hello-worl'. null and NaN silently return ''. verify.mjs has no test for these inputs."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "clean-feature",
+      "runner": "claude",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-clean-feature-Y1tOQU",
+      "durationMs": 39300,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "slug.mjs",
+          "line": 3,
+          "severity": "minor",
+          "problem": "Negative, NaN or null maxLength is passed straight to slice. slugify('Hello, World', {maxLength: -3}) returns 'hello-wo' (trailing chars dropped), and NaN/null return ''. No validation, and no test covers 0 or negative values."
+        }
+      ],
+      "costUsd": 0.1504412,
+      "turns": 4,
+      "claudeSession": "ff16487d-8682-408f-a36d-9f07ffcee3fd",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "slug.mjs",
+            "line": 3,
+            "severity": "minor",
+            "problem": "Negative, NaN or null maxLength is passed straight to slice. slugify('Hello, World', {maxLength: -3}) returns 'hello-wo' (trailing chars dropped), and NaN/null return ''. No validation, and no test covers 0 or negative values."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "clean-feature",
+      "runner": "claude",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-clean-feature-JNotU4",
+      "durationMs": 52205,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "slug.mjs",
+          "line": 3,
+          "severity": "minor",
+          "problem": "maxLength is not validated. A negative value makes slice(0, maxLength) cut characters from the end instead of limiting length, e.g. slugify('Hello World', {maxLength:-2}) returns 'hello-wor'. null and NaN silently return ''. No test covers 0, negative or non-numeric values."
+        }
+      ],
+      "costUsd": 0.1507416,
+      "turns": 4,
+      "claudeSession": "cd6f643d-60cd-481b-9f34-4ecf9fc7299e",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "slug.mjs",
+            "line": 3,
+            "severity": "minor",
+            "problem": "maxLength is not validated. A negative value makes slice(0, maxLength) cut characters from the end instead of limiting length, e.g. slugify('Hello World', {maxLength:-2}) returns 'hello-wor'. null and NaN silently return ''. No test covers 0, negative or non-numeric values."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "clean-refactor",
+      "runner": "plugin",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-clean-refactor-TFhLfG",
+      "durationMs": 75983,
+      "outcome": "passed",
+      "rounds": 1,
+      "complete": true,
+      "findings": [],
+      "fixRan": false,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e736a6f4cffeV3fmYemLMi2uRD",
+      "fixerSession": "ses_e736b0d14ffe84F8RXFn7EiftO",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "clean-refactor",
+      "runner": "plugin",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-clean-refactor-L1csbc",
+      "durationMs": 57768,
+      "outcome": "passed",
+      "rounds": 1,
+      "complete": true,
+      "findings": [],
+      "fixRan": false,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e73696b94ffeFplZvOXVMTDH93",
+      "fixerSession": "ses_e7369d6eeffeuLgz2lRD7T1yQP",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "clean-refactor",
+      "runner": "plugin",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-clean-refactor-ELXPdg",
+      "durationMs": 48398,
+      "outcome": "passed",
+      "rounds": 1,
+      "complete": true,
+      "findings": [],
+      "fixRan": false,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e7368929affei64pT1lWu3iRwI",
+      "fixerSession": "ses_e7368e9e1ffedT2YhYq86RMLe8",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "clean-refactor",
+      "runner": "claude",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-clean-refactor-wSe0pD",
+      "durationMs": 43509,
+      "outcome": "reviewed",
+      "findings": [],
+      "costUsd": 0.5427291,
+      "turns": 4,
+      "claudeSession": "20e31207-c69c-4700-9439-54a9073587f7",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "clean-refactor",
+      "runner": "claude",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-clean-refactor-9LllV2",
+      "durationMs": 33189,
+      "outcome": "reviewed",
+      "findings": [],
+      "costUsd": 0.1443702,
+      "turns": 4,
+      "claudeSession": "286ff700-08fd-438b-8a23-01656db74d29",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "clean-refactor",
+      "runner": "claude",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-clean-refactor-SCR3z4",
+      "durationMs": 31318,
+      "outcome": "reviewed",
+      "findings": [],
+      "costUsd": 0.2479026,
+      "turns": 4,
+      "claudeSession": "86de353c-6601-4003-b565-bcb6388d7392",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "pagination",
+      "runner": "plugin",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pagination-AA7cYS",
+      "durationMs": 100816,
+      "outcome": "passed",
+      "rounds": 2,
+      "complete": true,
+      "findings": [
+        {
+          "id": "total-pages-floor",
+          "severity": "major",
+          "file": "paginate.mjs",
+          "line": 5,
+          "problem": "totalPages uses Math.floor, which undercounts when items.length is not a multiple of size. It should use Math.ceil.",
+          "failure_scenario": "paginate([1,2,3,4,5], 1, 2) returns totalPages 2 instead of 3, so the last partial page is not counted.",
+          "suggested_fix": "Use Math.ceil(items.length / size).",
+          "introduced_by": null
+        },
+        {
+          "id": "has-next-off-by-one",
+          "severity": "major",
+          "file": "paginate.mjs",
+          "line": 6,
+          "problem": "hasNext uses <=, so it is true on the last page when the items divide evenly.",
+          "failure_scenario": "paginate([1,2,3,4], 2, 2) has start=2 and start+size=4 <= 4, so hasNext is true although page 2 is the last page. A client would then request an empty page 3.",
+          "suggested_fix": "Use start + size < items.length.",
+          "introduced_by": null
+        },
+        {
+          "id": "tests-miss-edges",
+          "severity": "minor",
+          "file": "verify.mjs",
+          "line": 4,
+          "problem": "The tests only cover evenly divisible input and a first page, so neither bug is caught. The last page and partial-page cases are untested.",
+          "failure_scenario": "The current tests pass while both defects above remain.",
+          "suggested_fix": "Add assertions for the last page of an even split and for a partial last page.",
+          "introduced_by": null
+        }
+      ],
+      "fixRan": true,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e7365f94dffeFgNUiJv1VqBUUw",
+      "fixerSession": "ses_e73664e73ffebxNhRe83Mrs4dG",
+      "score": {
+        "caught": [
+          "total-pages-floor",
+          "has-next-boundary"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "id": "tests-miss-edges",
+            "severity": "minor",
+            "file": "verify.mjs",
+            "line": 4,
+            "problem": "The tests only cover evenly divisible input and a first page, so neither bug is caught. The last page and partial-page cases are untested.",
+            "failure_scenario": "The current tests pass while both defects above remain.",
+            "suggested_fix": "Add assertions for the last page of an even split and for a partial last page.",
+            "introduced_by": null
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "pagination",
+      "runner": "plugin",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pagination-M6fAMb",
+      "durationMs": 73528,
+      "outcome": "passed",
+      "rounds": 2,
+      "complete": true,
+      "findings": [
+        {
+          "id": "total-pages-floor",
+          "severity": "major",
+          "file": "paginate.mjs",
+          "line": 5,
+          "problem": "totalPages uses Math.floor, which drops a partial last page. It should round up.",
+          "failure_scenario": "paginate([1,2,3,4,5], 1, 2) returns totalPages 2, but 3 pages exist (the last holds [5]). Callers would never show the last item.",
+          "suggested_fix": "Use Math.ceil(items.length / size).",
+          "introduced_by": null
+        },
+        {
+          "id": "has-next-off-by-one",
+          "severity": "major",
+          "file": "paginate.mjs",
+          "line": 6,
+          "problem": "hasNext uses <=, so it is true on the last page when the items divide evenly.",
+          "failure_scenario": "paginate([1,2,3,4], 2, 2) has start=2, so 4<=4 is true and hasNext is true, though page 2 is the last. A caller would request an empty page 3.",
+          "suggested_fix": "Use start + size < items.length.",
+          "introduced_by": null
+        },
+        {
+          "id": "tests-miss-bugs",
+          "severity": "minor",
+          "file": "verify.mjs",
+          "line": 4,
+          "problem": "The tests only use evenly divisible input and the first page. They do not cover a partial last page or hasNext on the last page.",
+          "failure_scenario": "Both bugs above pass verify.mjs unnoticed.",
+          "suggested_fix": "Add cases for a partial last page and for hasNext false on the last page.",
+          "introduced_by": null
+        }
+      ],
+      "fixRan": true,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e73649e4dffewfUyoQj8x7n33f",
+      "fixerSession": "ses_e7364d225ffeCmRuzzMzk5vsSO",
+      "score": {
+        "caught": [
+          "total-pages-floor",
+          "has-next-boundary"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "id": "tests-miss-bugs",
+            "severity": "minor",
+            "file": "verify.mjs",
+            "line": 4,
+            "problem": "The tests only use evenly divisible input and the first page. They do not cover a partial last page or hasNext on the last page.",
+            "failure_scenario": "Both bugs above pass verify.mjs unnoticed.",
+            "suggested_fix": "Add cases for a partial last page and for hasNext false on the last page.",
+            "introduced_by": null
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "pagination",
+      "runner": "plugin",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pagination-GBq6HY",
+      "durationMs": 95572,
+      "outcome": "passed",
+      "rounds": 2,
+      "complete": true,
+      "findings": [
+        {
+          "id": "total-pages-floor",
+          "severity": "major",
+          "file": "paginate.mjs",
+          "line": 5,
+          "problem": "totalPages uses Math.floor, so a partial last page is not counted. It should round up.",
+          "failure_scenario": "paginate([1,2,3,4,5],1,2) returns totalPages 2, but 3 pages are needed. Item 5 is on a page the total never counts.",
+          "suggested_fix": "Use Math.ceil(items.length / size).",
+          "introduced_by": null
+        },
+        {
+          "id": "has-next-off",
+          "severity": "major",
+          "file": "paginate.mjs",
+          "line": 6,
+          "problem": "hasNext uses <=, so it is true when the current page ends exactly at the last item.",
+          "failure_scenario": "paginate([1,2,3,4],2,2) has start+size=4 and length 4, so hasNext is true even though page 2 is the last page.",
+          "suggested_fix": "Use start + size < items.length.",
+          "introduced_by": null
+        },
+        {
+          "id": "tests-miss-edges",
+          "severity": "minor",
+          "file": "verify.mjs",
+          "line": 3,
+          "problem": "The tests only cover an evenly divisible list and only check hasNext on a non-last page. They miss both bugs above.",
+          "failure_scenario": "Both defects pass verify.mjs unnoticed.",
+          "suggested_fix": "Add a last-page case and a case where the length is not a multiple of size.",
+          "introduced_by": null
+        }
+      ],
+      "fixRan": true,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e73637b8effe3Qw7gTeQ19xm7o",
+      "fixerSession": "ses_e7363af72ffe1j4XAhkldyoxlW",
+      "score": {
+        "caught": [
+          "total-pages-floor",
+          "has-next-boundary"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "id": "tests-miss-edges",
+            "severity": "minor",
+            "file": "verify.mjs",
+            "line": 3,
+            "problem": "The tests only cover an evenly divisible list and only check hasNext on a non-last page. They miss both bugs above.",
+            "failure_scenario": "Both defects pass verify.mjs unnoticed.",
+            "suggested_fix": "Add a last-page case and a case where the length is not a multiple of size.",
+            "introduced_by": null
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "pagination",
+      "runner": "claude",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pagination-4Axmm4",
+      "durationMs": 42131,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "paginate.mjs",
+          "line": 6,
+          "severity": "major",
+          "problem": "totalPages uses Math.floor, so a remainder is dropped. paginate([1,2,3,4,5],1,2).totalPages is 2 but 3 pages exist, so the last item is unreachable. Use Math.ceil."
+        },
+        {
+          "file": "paginate.mjs",
+          "line": 7,
+          "severity": "major",
+          "problem": "hasNext uses `start + size <= items.length`, which is true on an exactly-full last page. paginate([1,2,3,4],2,2).hasNext is true although there is no next page. Use `<`."
+        },
+        {
+          "file": "verify.mjs",
+          "line": 3,
+          "severity": "major",
+          "problem": "The assertions use only a length-6, size-2 case. This hides the floor/ceil bug and never tests hasNext on the last page, so the suite passes despite both defects. Add a remainder case (5 items, size 2) and a last-page case (hasNext false)."
+        },
+        {
+          "file": "paginate.mjs",
+          "line": 3,
+          "severity": "minor",
+          "problem": "The return type changed from an array to an object, which breaks any caller that indexes, iterates or uses .length on the result. No other callers are visible in the repo."
+        }
+      ],
+      "costUsd": 0.25554659999999996,
+      "turns": 3,
+      "claudeSession": "4e0f0f1d-0a07-4542-9814-8fc498edf628",
+      "score": {
+        "caught": [
+          "has-next-boundary"
+        ],
+        "missed": [
+          "total-pages-floor"
+        ],
+        "unmatched": [
+          {
+            "file": "paginate.mjs",
+            "line": 7,
+            "severity": "major",
+            "problem": "hasNext uses `start + size <= items.length`, which is true on an exactly-full last page. paginate([1,2,3,4],2,2).hasNext is true although there is no next page. Use `<`."
+          },
+          {
+            "file": "verify.mjs",
+            "line": 3,
+            "severity": "major",
+            "problem": "The assertions use only a length-6, size-2 case. This hides the floor/ceil bug and never tests hasNext on the last page, so the suite passes despite both defects. Add a remainder case (5 items, size 2) and a last-page case (hasNext false)."
+          },
+          {
+            "file": "paginate.mjs",
+            "line": 3,
+            "severity": "minor",
+            "problem": "The return type changed from an array to an object, which breaks any caller that indexes, iterates or uses .length on the result. No other callers are visible in the repo."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "pagination",
+      "runner": "claude",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pagination-WAQY4s",
+      "durationMs": 36643,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "paginate.mjs",
+          "line": 5,
+          "severity": "major",
+          "problem": "totalPages uses Math.floor, so a partial last page is dropped. 5 items with size 2 gives 2 instead of 3, and 1 item with size 5 gives 0. Use Math.ceil."
+        },
+        {
+          "file": "paginate.mjs",
+          "line": 6,
+          "severity": "major",
+          "problem": "hasNext uses <=, so it is true on the last page when the page ends exactly at items.length. [1..6], page 3, size 2 gives hasNext true with no next page. Use <."
+        },
+        {
+          "file": "paginate.mjs",
+          "line": 3,
+          "severity": "minor",
+          "problem": "The return type changed from an array to an object. Any existing caller that indexes or iterates the result will break."
+        },
+        {
+          "file": "verify.mjs",
+          "line": 4,
+          "severity": "major",
+          "problem": "The tests only cover evenly divisible lists and page 1 for hasNext and totalPages. They miss the partial-last-page and last-page hasNext cases, so both bugs pass."
+        }
+      ],
+      "costUsd": 0.252511,
+      "turns": 4,
+      "claudeSession": "cf65a683-b576-4950-9fba-be3b0ac40dc5",
+      "score": {
+        "caught": [
+          "total-pages-floor",
+          "has-next-boundary"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "paginate.mjs",
+            "line": 3,
+            "severity": "minor",
+            "problem": "The return type changed from an array to an object. Any existing caller that indexes or iterates the result will break."
+          },
+          {
+            "file": "verify.mjs",
+            "line": 4,
+            "severity": "major",
+            "problem": "The tests only cover evenly divisible lists and page 1 for hasNext and totalPages. They miss the partial-last-page and last-page hasNext cases, so both bugs pass."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "pagination",
+      "runner": "claude",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pagination-yBkDmR",
+      "durationMs": 30821,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "paginate.mjs",
+          "line": 5,
+          "severity": "major",
+          "problem": "totalPages uses Math.floor, so a partial last page is dropped. 5 items at size 2 gives 2 instead of 3. Use Math.ceil."
+        },
+        {
+          "file": "paginate.mjs",
+          "line": 6,
+          "severity": "major",
+          "problem": "hasNext uses <=, so it is true on the last page when items.length is an exact multiple of the page end. paginate([1,2,3,4],2,2) returns hasNext true with no next page. Use <."
+        },
+        {
+          "file": "paginate.mjs",
+          "line": 3,
+          "severity": "minor",
+          "problem": "The return type changed from an array to an object. Callers that treat the result as an array will break. I did not check for other callers."
+        },
+        {
+          "file": "verify.mjs",
+          "line": 3,
+          "severity": "major",
+          "problem": "Tests only use 6 items at size 2, so they miss the floor and <= bugs. There is no test for a partial last page, the last full page, an empty list, or size 0."
+        }
+      ],
+      "costUsd": 0.15303719999999998,
+      "turns": 4,
+      "claudeSession": "fa7a0903-899d-4fe4-bc1d-75e4d00c1082",
+      "score": {
+        "caught": [
+          "total-pages-floor",
+          "has-next-boundary"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "paginate.mjs",
+            "line": 3,
+            "severity": "minor",
+            "problem": "The return type changed from an array to an object. Callers that treat the result as an array will break. I did not check for other callers."
+          },
+          {
+            "file": "verify.mjs",
+            "line": 3,
+            "severity": "major",
+            "problem": "Tests only use 6 items at size 2, so they miss the floor and <= bugs. There is no test for a partial last page, the last full page, an empty list, or size 0."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "pr-3",
+      "runner": "plugin",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pr-3-RavTi7",
+      "durationMs": 197937,
+      "outcome": "stopped",
+      "reason": "Check failed with exit 1: npm test",
+      "rounds": 0,
+      "findings": [],
+      "fixRan": false,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "fixerSession": "ses_e7360793cffe6XPW8ltYvYb39Z",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "pr-3",
+      "runner": "plugin",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pr-3-zTP0IH",
+      "durationMs": 179846,
+      "outcome": "passed",
+      "rounds": 1,
+      "complete": true,
+      "findings": [],
+      "fixRan": false,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e735b1548ffevuyrcwOaC6XeON",
+      "fixerSession": "ses_e735d68c4ffeo7vefDgyXkCQxz",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "pr-3",
+      "runner": "plugin",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pr-3-XugUVd",
+      "durationMs": 196928,
+      "outcome": "stopped",
+      "reason": "Check failed with exit 1: npm test",
+      "rounds": 0,
+      "findings": [],
+      "fixRan": false,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "fixerSession": "ses_e735aa703ffeVYU5gmCI1pJoFZ",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "pr-3",
+      "runner": "claude",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pr-3-9qEsta",
+      "durationMs": 76692,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "src/engine.mjs",
+          "line": 237,
+          "severity": "minor",
+          "problem": "Recovery of an invalid review submission depends on `part.id` in the session context equalling the tool call's `context.id`. Nothing in the repo or tests shows the host's tool part carries that key; the tests invent it on both sides. If the real part uses another field (e.g. `callID`), a reviewer that corrects a bad submission is still stopped as an unrecovered tool error whenever the host reports error type `unknown`."
+        },
+        {
+          "file": "src/contracts.mjs",
+          "line": 22,
+          "severity": "minor",
+          "problem": "`validateReview` throws a `TypeError` rather than `ReviewInputError` for some malformed input, such as a null element in `issues` or `resolutions`, or a non-object `introduced_by`. Those errors bypass `invalidReviewCalls`, so a reviewer that corrects such a submission is not recognised as having recovered."
+        },
+        {
+          "file": "src/engine.mjs",
+          "line": 202,
+          "severity": "minor",
+          "problem": "The `describe` text for every stopped run says 'Unconfirmed cleanup retains the worktree claim.', even when cleanup completed and the claim was released. Users are told to expect a retained claim that does not exist."
+        }
+      ],
+      "costUsd": 0.3663092,
+      "turns": 6,
+      "claudeSession": "0918449c-369d-4b1a-b022-b713b15b7912",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "src/engine.mjs",
+            "line": 237,
+            "severity": "minor",
+            "problem": "Recovery of an invalid review submission depends on `part.id` in the session context equalling the tool call's `context.id`. Nothing in the repo or tests shows the host's tool part carries that key; the tests invent it on both sides. If the real part uses another field (e.g. `callID`), a reviewer that corrects a bad submission is still stopped as an unrecovered tool error whenever the host reports error type `unknown`."
+          },
+          {
+            "file": "src/contracts.mjs",
+            "line": 22,
+            "severity": "minor",
+            "problem": "`validateReview` throws a `TypeError` rather than `ReviewInputError` for some malformed input, such as a null element in `issues` or `resolutions`, or a non-object `introduced_by`. Those errors bypass `invalidReviewCalls`, so a reviewer that corrects such a submission is not recognised as having recovered."
+          },
+          {
+            "file": "src/engine.mjs",
+            "line": 202,
+            "severity": "minor",
+            "problem": "The `describe` text for every stopped run says 'Unconfirmed cleanup retains the worktree claim.', even when cleanup completed and the claim was released. Users are told to expect a retained claim that does not exist."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "pr-3",
+      "runner": "claude",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pr-3-Cn3tqa",
+      "durationMs": 49034,
+      "outcome": "reviewed",
+      "findings": [],
+      "costUsd": 0.20504470000000002,
+      "turns": 4,
+      "claudeSession": "34edceae-19de-4826-b8cc-c4cf475d190e",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "pr-3",
+      "runner": "claude",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pr-3-67aW9A",
+      "durationMs": 59694,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "src/engine.mjs",
+          "line": 237,
+          "severity": "minor",
+          "problem": "Recovery matches the transcript part's `id` against the tool-call `context.id` recorded in `submitReview`. Nothing in src confirms the host uses the same id for both, and the tests build the match by hand (`toolCallID: 'invalid'` with part `id: 'invalid'`). If the ids differ, an invalid review followed by a corrected one is still treated as an unrecovered tool error: the failure scenario is a reviewer turn that retried correctly but aborts the whole run with the new diagnostic message."
+        },
+        {
+          "file": "src/contracts.mjs",
+          "line": 24,
+          "severity": "minor",
+          "problem": "Recovery covers only `ReviewInputError`. Malformed input such as `issues: [null]`, or a null `introduced_by.explanation` path, still throws a plain `TypeError` at `issue.id`. That call is never added to `invalidReviewCalls`, so a reviewer that resubmits correctly after it still aborts the run as an unrecovered tool error."
+        }
+      ],
+      "costUsd": 0.3352375,
+      "turns": 5,
+      "claudeSession": "cf5d6e4e-8989-467f-b22e-e30a2ff866c9",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "src/engine.mjs",
+            "line": 237,
+            "severity": "minor",
+            "problem": "Recovery matches the transcript part's `id` against the tool-call `context.id` recorded in `submitReview`. Nothing in src confirms the host uses the same id for both, and the tests build the match by hand (`toolCallID: 'invalid'` with part `id: 'invalid'`). If the ids differ, an invalid review followed by a corrected one is still treated as an unrecovered tool error: the failure scenario is a reviewer turn that retried correctly but aborts the whole run with the new diagnostic message."
+          },
+          {
+            "file": "src/contracts.mjs",
+            "line": 24,
+            "severity": "minor",
+            "problem": "Recovery covers only `ReviewInputError`. Malformed input such as `issues: [null]`, or a null `introduced_by.explanation` path, still throws a plain `TypeError` at `issue.id`. That call is never added to `invalidReviewCalls`, so a reviewer that resubmits correctly after it still aborts the run as an unrecovered tool error."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "unawaited-retry",
+      "runner": "plugin",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-unawaited-retry-ZsAPBf",
+      "durationMs": 142398,
+      "outcome": "passed",
+      "rounds": 2,
+      "complete": true,
+      "findings": [
+        {
+          "id": "retry-missing-await",
+          "severity": "major",
+          "file": "save.mjs",
+          "line": 10,
+          "problem": "saveWithRetry calls the async store.write without await. Rejections are never caught by the try/catch, so no retry happens and the function returns true before the write finishes. The rejection is left unhandled.",
+          "failure_scenario": "store.write rejects on a transient failure. saveWithRetry has already returned true, the caller assumes the data was saved, and the unhandled rejection can crash Node. No retry is attempted.",
+          "suggested_fix": "Use `await store.write(user.id, user);` inside the try block.",
+          "introduced_by": null
+        },
+        {
+          "id": "retry-test-weak",
+          "severity": "minor",
+          "file": "verify.mjs",
+          "line": 7,
+          "problem": "The test only covers a write that succeeds first time. It does not cover a failing write, so it cannot detect the missing await or check retry and give-up behaviour.",
+          "failure_scenario": "The missing await ships and the test still passes.",
+          "suggested_fix": "Add tests with a store whose write rejects once and then succeeds (expect true), and one that always rejects (expect false after 3 attempts).",
+          "introduced_by": null
+        }
+      ],
+      "fixRan": true,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e73543cb1ffe0xdmp0xTK8xVEH",
+      "fixerSession": "ses_e7354ad10ffe2eX4qBLTAK5dWy",
+      "score": {
+        "caught": [
+          "missing-await"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "id": "retry-test-weak",
+            "severity": "minor",
+            "file": "verify.mjs",
+            "line": 7,
+            "problem": "The test only covers a write that succeeds first time. It does not cover a failing write, so it cannot detect the missing await or check retry and give-up behaviour.",
+            "failure_scenario": "The missing await ships and the test still passes.",
+            "suggested_fix": "Add tests with a store whose write rejects once and then succeeds (expect true), and one that always rejects (expect false after 3 attempts).",
+            "introduced_by": null
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "unawaited-retry",
+      "runner": "plugin",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-unawaited-retry-jhMgcr",
+      "durationMs": 84791,
+      "outcome": "passed",
+      "rounds": 2,
+      "complete": true,
+      "findings": [
+        {
+          "id": "retry-no-await",
+          "severity": "blocker",
+          "file": "save.mjs",
+          "line": 10,
+          "problem": "store.write is async (as in save() and the test) but is not awaited inside the try. Rejections are never caught, so no retry occurs and the function returns true before the write completes.",
+          "failure_scenario": "The store's write rejects with a transient error. saveWithRetry has already returned true, so the caller believes the save succeeded. The rejection is unhandled, which can crash Node, and the data is lost.",
+          "suggested_fix": "Use `await store.write(user.id, user);` inside the try.",
+          "introduced_by": null
+        },
+        {
+          "id": "retry-test-weak",
+          "severity": "major",
+          "file": "verify.mjs",
+          "line": 7,
+          "problem": "The test only covers the success path. It cannot detect the missing await, and it never exercises retry or exhaustion.",
+          "failure_scenario": "The missing await passes verification. A store whose write fails and then succeeds would not be retried, and the test would not show it.",
+          "suggested_fix": "Add a store whose write rejects N times and then succeeds, and assert true plus the call count. Add an always-failing store and assert false after 3 attempts.",
+          "introduced_by": null
+        }
+      ],
+      "fixRan": true,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e735231fcffe3VDjhf3SqgCKX9",
+      "fixerSession": "ses_e73527999ffeGAq8KwCpNZv22w",
+      "score": {
+        "caught": [
+          "missing-await"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "id": "retry-test-weak",
+            "severity": "major",
+            "file": "verify.mjs",
+            "line": 7,
+            "problem": "The test only covers the success path. It cannot detect the missing await, and it never exercises retry or exhaustion.",
+            "failure_scenario": "The missing await passes verification. A store whose write fails and then succeeds would not be retried, and the test would not show it.",
+            "suggested_fix": "Add a store whose write rejects N times and then succeeds, and assert true plus the call count. Add an always-failing store and assert false after 3 attempts.",
+            "introduced_by": null
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "unawaited-retry",
+      "runner": "plugin",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-unawaited-retry-nLeC69",
+      "durationMs": 77306,
+      "outcome": "passed",
+      "rounds": 2,
+      "complete": true,
+      "findings": [
+        {
+          "id": "retry-unawaited",
+          "severity": "major",
+          "file": "save.mjs",
+          "line": 10,
+          "problem": "store.write is async (as in save() and the test store) but is not awaited in saveWithRetry. The try/catch only catches synchronous throws, so rejected promises are never caught and no retry occurs. The function returns true before the write completes.",
+          "failure_scenario": "store.write returns a rejected promise on a transient failure. saveWithRetry returns true immediately, the data is not saved, and an unhandled rejection may crash the process.",
+          "suggested_fix": "Await the write: `await store.write(user.id, user);`. Add a test with a store whose write rejects once and then succeeds, and assert the retry happens and the result is true.",
+          "introduced_by": null
+        }
+      ],
+      "fixRan": true,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e7350fae1ffeGATedTgv6iqgfB",
+      "fixerSession": "ses_e73512ad8ffem9E6lLWNTk0xPd",
+      "score": {
+        "caught": [
+          "missing-await"
+        ],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "unawaited-retry",
+      "runner": "claude",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-unawaited-retry-y5ORNr",
+      "durationMs": 26102,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "save.mjs",
+          "line": 10,
+          "severity": "blocker",
+          "problem": "store.write is not awaited. A rejected write skips the catch, so there is no retry and the function returns true on failure. The rejection is unhandled and can crash the process. Fix: await store.write(user.id, user)."
+        },
+        {
+          "file": "verify.mjs",
+          "line": 7,
+          "severity": "major",
+          "problem": "The test only covers a store that always succeeds. It does not cover retry after a failure, the false return after all attempts fail, or awaiting of the write, so the missing await passes unnoticed. Add a store that rejects N times then succeeds, and one that always rejects."
+        }
+      ],
+      "costUsd": 0.2510035,
+      "turns": 4,
+      "claudeSession": "0c134754-88ee-4d62-9e08-ea7f8ad8adc7",
+      "score": {
+        "caught": [
+          "missing-await"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "verify.mjs",
+            "line": 7,
+            "severity": "major",
+            "problem": "The test only covers a store that always succeeds. It does not cover retry after a failure, the false return after all attempts fail, or awaiting of the write, so the missing await passes unnoticed. Add a store that rejects N times then succeeds, and one that always rejects."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "unawaited-retry",
+      "runner": "claude",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-unawaited-retry-jTuMkN",
+      "durationMs": 23424,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "save.mjs",
+          "line": 11,
+          "severity": "blocker",
+          "problem": "store.write(...) is not awaited, so async rejections bypass the try/catch. Retry never happens, failed writes return true, and an unhandled rejection can crash the process. Add `await`."
+        },
+        {
+          "file": "verify.mjs",
+          "line": 7,
+          "severity": "major",
+          "problem": "Test only exercises a store that never fails. Retry-then-succeed and always-fail (expect false) cases are untested, so the missing await passes undetected."
+        }
+      ],
+      "costUsd": 0.1476535,
+      "turns": 3,
+      "claudeSession": "3225b7ed-fb19-49c4-a8bd-6f67ca43f869",
+      "score": {
+        "caught": [
+          "missing-await"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "verify.mjs",
+            "line": 7,
+            "severity": "major",
+            "problem": "Test only exercises a store that never fails. Retry-then-succeed and always-fail (expect false) cases are untested, so the missing await passes undetected."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "unawaited-retry",
+      "runner": "claude",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-unawaited-retry-aDcZCj",
+      "durationMs": 22569,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "save.mjs",
+          "line": 10,
+          "severity": "blocker",
+          "problem": "store.write(...) is not awaited inside try/catch. Async rejections bypass the catch, so no retry happens and saveWithRetry returns true even when the write failed. The rejection is also left unhandled, so data is silently lost."
+        },
+        {
+          "file": "verify.mjs",
+          "line": 7,
+          "severity": "major",
+          "problem": "The test only uses an always-succeeding store. It never exercises a failing write, a retry, or a false return after attempts run out. The missing await in saveWithRetry therefore goes undetected."
+        }
+      ],
+      "costUsd": 0.14892460000000002,
+      "turns": 4,
+      "claudeSession": "0ee7819c-f47d-46f4-a302-ee2900159b69",
+      "score": {
+        "caught": [
+          "missing-await"
+        ],
+        "missed": [],
+        "unmatched": [
+          {
+            "file": "verify.mjs",
+            "line": 7,
+            "severity": "major",
+            "problem": "The test only uses an always-succeeding store. It never exercises a failing write, a retry, or a false return after attempts run out. The missing await in saveWithRetry therefore goes undetected."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "weakened-test",
+      "runner": "plugin",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-weakened-test-FkOqZg",
+      "durationMs": 30016,
+      "outcome": "error",
+      "error": "The operation was aborted due to timeout",
+      "findings": [],
+      "score": {
+        "caught": [],
+        "missed": [
+          "clamp-removed"
+        ],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "weakened-test",
+      "runner": "plugin",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-weakened-test-Ts0BSf",
+      "durationMs": 60197,
+      "outcome": "stopped",
+      "reason": "Missing or incomplete review.",
+      "rounds": 1,
+      "complete": false,
+      "findings": [],
+      "fixRan": false,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e734ddb87ffeII112Oh6cGahq8",
+      "fixerSession": "ses_e734e2af6ffedKKxgDc3ZLBskz",
+      "score": {
+        "caught": [],
+        "missed": [
+          "clamp-removed"
+        ],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "weakened-test",
+      "runner": "plugin",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-weakened-test-Mkunyb",
+      "durationMs": 74780,
+      "outcome": "passed",
+      "rounds": 2,
+      "complete": true,
+      "findings": [
+        {
+          "id": "discount-clamp-removed",
+          "severity": "major",
+          "file": "discount.mjs",
+          "line": 2,
+          "problem": "applyDiscount no longer clamps percent to the 0-100 range. The tests that covered the clamping were deleted in verify.mjs instead of being kept.",
+          "failure_scenario": "applyDiscount(200, 150) now returns -100, a negative price. Before this change it returned 0. applyDiscount(200, -10) now returns 220, a price increase. Before this change it returned 200. applyCoupon passes coupon.percent straight through, so a coupon with percent 150 or -10 gives the same wrong prices. The removed asserts would have caught this.",
+          "suggested_fix": "Restore the clamp: const bounded = Math.min(Math.max(percent, 0), 100); return Math.round(price * (100 - bounded)) / 100. Restore the two deleted asserts in verify.mjs and add a clamp case for applyCoupon.",
+          "introduced_by": null
+        }
+      ],
+      "fixRan": true,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-sonnet-5.5"
+      },
+      "reviewerSession": "ses_e734d17aaffelUquIgfyBcU1rr",
+      "fixerSession": "ses_e734d562cffeUMVycMF3O11R6t",
+      "score": {
+        "caught": [
+          "clamp-removed"
+        ],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "weakened-test",
+      "runner": "claude",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-weakened-test-i8y0M7",
+      "durationMs": 24370,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "discount.mjs",
+          "line": 2,
+          "severity": "major",
+          "problem": "Clamp of percent to [0,100] removed from applyDiscount. applyDiscount(200,150) now returns -100 (negative price) and applyDiscount(200,-10) returns 220. applyCoupon forwards unvalidated coupon.percent, so a bad coupon gives a negative or inflated price."
+        },
+        {
+          "file": "verify.mjs",
+          "line": 4,
+          "severity": "major",
+          "problem": "Assertions for out-of-range percent (150 -> 0, -10 -> 200) were deleted, so the regression goes undetected and verify.mjs passes. The new applyCoupon test covers only the in-range case."
+        }
+      ],
+      "costUsd": 0.1492211,
+      "turns": 4,
+      "claudeSession": "e47a9e02-c016-4330-8461-680d52fea7a5",
+      "score": {
+        "caught": [
+          "clamp-removed"
+        ],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "weakened-test",
+      "runner": "claude",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-weakened-test-NAzyya",
+      "durationMs": 24937,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "discount.mjs",
+          "line": 2,
+          "severity": "major",
+          "problem": "Removed clamping of percent to [0,100]. applyDiscount(200,150) now returns -100 (was 0) and applyDiscount(200,-10) returns 220 (was 200). applyCoupon passes coupon.percent unvalidated, so a coupon with percent > 100 yields a negative price."
+        },
+        {
+          "file": "verify.mjs",
+          "line": 4,
+          "severity": "major",
+          "problem": "Assertions for out-of-range percent (150 -> 0, -10 -> 200) were deleted instead of kept. The suite no longer checks the bounds, so the regression passes verification. The new applyCoupon test covers only the happy path."
+        }
+      ],
+      "costUsd": 0.1481106,
+      "turns": 3,
+      "claudeSession": "d65cd0c6-c7b9-4b65-8207-5de3a198e5b9",
+      "score": {
+        "caught": [
+          "clamp-removed"
+        ],
+        "missed": [],
+        "unmatched": []
+      }
+    },
+    {
+      "fixture": "weakened-test",
+      "runner": "claude",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-weakened-test-Eml0a2",
+      "durationMs": 24691,
+      "outcome": "reviewed",
+      "findings": [
+        {
+          "file": "discount.mjs",
+          "line": 2,
+          "severity": "blocker",
+          "problem": "Clamping of percent to [0,100] was removed. applyDiscount(200,150) now returns -100 (was 0), and applyDiscount(200,-10) now returns 220 (was 200). applyCoupon passes coupon.percent through unchecked, so a coupon over 100% gives a negative price."
+        },
+        {
+          "file": "verify.mjs",
+          "line": 4,
+          "severity": "major",
+          "problem": "The assertions for percent=150 (expects 0) and percent=-10 (expects 200) were deleted. They would have failed against the new code, so the regression passes unnoticed. The only added assertion, applyCoupon at 10%, covers the happy path."
+        }
+      ],
+      "costUsd": 0.1494272,
+      "turns": 3,
+      "claudeSession": "efc9d76d-3a28-43ec-b2d5-d4ff2cfaab02",
+      "score": {
+        "caught": [
+          "clamp-removed"
+        ],
+        "missed": [],
+        "unmatched": []
+      }
+    }
+  ]
+}

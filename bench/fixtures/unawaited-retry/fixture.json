@@ -1,0 +1,7 @@
+{
+  "description": "Retry wrapper calls an async write without await, so rejections escape the try block and no retry happens.",
+  "check": "node verify.mjs",
+  "defects": [
+    { "id": "missing-await", "description": "store.write is not awaited; a rejected write is unhandled and reported as success.", "locations": [{ "file": "save.mjs", "lines": [9, 11] }] }
+  ]
+}

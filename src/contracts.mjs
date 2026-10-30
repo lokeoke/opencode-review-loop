@@ -21,6 +21,10 @@ export function validateReview(value) {
   if (!value || typeof value.complete !== 'boolean') throw new ReviewInputError('Review must state whether coverage is complete.');
   list(value.issues, 'issues');
   list(value.resolutions, 'resolutions');
+  list(value.limitations, 'limitations');
+  for (const limitation of value.limitations) text(limitation, 'limitation');
+  list(value.assumptions, 'assumptions');
+  for (const assumption of value.assumptions) text(assumption, 'assumption');
   const ids = new Set();
   for (const issue of value.issues) {
     if (!ID.test(issue.id) || ids.has(issue.id)) throw new ReviewInputError('Invalid or duplicate finding id.');
@@ -69,5 +73,7 @@ export const REVIEW_SCHEMA = object({
   complete: { type: 'boolean' },
   issues: array(finding),
   resolutions: array(object({ id, status: { enum: ['fixed', 'open', 'disputed'] }, evidence: string })),
+  limitations: array(string),
+  assumptions: array(string),
 });
 export const FIX_SCHEMA = object({ runId: id, round: { type: 'integer', minimum: 1 }, summary: string, disputed: array(id) });

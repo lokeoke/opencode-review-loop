@@ -10,7 +10,7 @@ test('one global command runs checks and a separate Copilot review without chang
     assert.equal(input.sessionID, 'reviewer');
     assert.match(input.text, /value = 2/);
     const active = f.engine.activeFor('fixer');
-    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, issues: [], resolutions: [] });
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] });
   });
   const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'], goal: 'Change the value to two' });
   await task.done;
@@ -44,7 +44,7 @@ test('a finding is fixed in the existing session and explicitly resolved by the 
       await f.engine.submitFix('fixer', { runId, round, summary: 'Corrected value.', disputed: [] });
     } else {
       await f.engine.submitReview('reviewer', {
-        runId, round, complete: true,
+        runId, round, complete: true, limitations: [], assumptions: [],
         issues: round === 1 ? [{ id: 'value', severity: 'major', file: 'app.js', line: 1, problem: 'Incorrect value.', failure_scenario: 'Callers require three but receive two.', suggested_fix: 'Return three.' }] : [],
         resolutions: round === 1 ? [] : [{ id: 'value', status: 'fixed', evidence: 'app.js returns three.' }],
       });
@@ -74,7 +74,7 @@ test('wrong-session and duplicate submissions are rejected, and an unsuccessful 
   const f = await fixture(t);
   f.setPrompt(async () => {
     const active = f.engine.activeFor('fixer');
-    const result = { runId: active.run.state.id, round: 1, complete: true, issues: [], resolutions: [] };
+    const result = { runId: active.run.state.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] };
     await assert.rejects(f.engine.submitReview('fixer', result), /session/);
     await f.engine.submitReview('reviewer', result);
     await assert.rejects(f.engine.submitReview('reviewer', result), /already/);
@@ -99,5 +99,5 @@ test('stop interrupts the active turn and rejects late results without schedulin
   const state = await f.engine.status('fixer');
   assert.equal(state.phase, 'stopped');
   assert.match(state.reason, /Cancelled/);
-  await assert.rejects(f.engine.submitReview('reviewer', { runId: task.id, round: 1, complete: true, issues: [], resolutions: [] }), /session/);
+  await assert.rejects(f.engine.submitReview('reviewer', { runId: task.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] }), /session/);
 });
