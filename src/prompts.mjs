@@ -10,6 +10,7 @@ Investigate before you submit:
 1. Read the diff. If diffMode is per-file the diff was too large to embed: read every changed file with
    review_loop_source operation "diff" and that path, continuing at the offset it names until it ends with "(end of diff)".
 2. Open every changed file with review_loop_source operation "read" to see the code around each change.
+   A deleted file cannot be read: page its "diff" to the end instead.
    The controller refuses complete=true until every changed file was inspected. That proves access, not understanding.
 3. For each changed function, type or behaviour, list candidate problems: wrong results, edge and boundary cases,
    error handling, security, concurrency, broken callers, and whether tests really exercise the changed behaviour.

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveShellPath, runCheck } from '../src/checks.mjs';
+import { checkPath, resolveShellPath, runCheck } from '../src/checks.mjs';
 
 test('verification records actual success and rejects nonzero exits', async () => {
   assert.equal((await runCheck('exit 0', process.cwd())).exitCode, 0);
@@ -45,7 +45,8 @@ test('checks run with the PATH they are given, so tools outside the service PATH
 
 test('the login shell PATH comes first and keeps the service PATH entries after it', async (t) => {
   const directory = await scratch(t);
-  const shell = await script(directory, 'shell', `echo 'profile noise'; printf '\\n__REVIEW_LOOP_PATH__%s\\n' '/opt/tools/bin:/usr/bin'`);
+  // Noise before the marker, including a PATH= line, is profile output, not the environment.
+  const shell = await script(directory, 'shell', `echo 'PATH=/from/profile/noise'; echo __REVIEW_LOOP_PATH__; echo 'HOME=/home/user'; echo 'PATH=/opt/tools/bin:/usr/bin'`);
   assert.equal(await resolveShellPath({ shell, fallback: '/usr/bin:/bin' }), '/opt/tools/bin:/usr/bin:/bin');
 });
 
@@ -56,4 +57,14 @@ test('an unusable login shell falls back to the service PATH', async (t) => {
   assert.equal(await resolveShellPath({ shell: silent, fallback: '/usr/bin:/bin' }), '/usr/bin:/bin');
   const hanging = await script(directory, 'hanging', 'sleep 30');
   assert.equal(await resolveShellPath({ shell: hanging, fallback: '/usr/bin:/bin', timeoutMs: 200 }), '/usr/bin:/bin');
+});
+
+test('a failed shell lookup is retried by the next check instead of being kept for the service lifetime', async (t) => {
+  const directory = await scratch(t);
+  const original = process.env.SHELL;
+  t.after(() => { process.env.SHELL = original; });
+  process.env.SHELL = join(directory, 'missing');
+  assert.equal(await checkPath(), process.env.PATH);
+  process.env.SHELL = await script(directory, 'shell', `echo __REVIEW_LOOP_PATH__; echo 'PATH=/opt/tools/bin'`);
+  assert.match(await checkPath(), /^\/opt\/tools\/bin:/);
 });

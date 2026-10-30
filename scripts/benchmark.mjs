@@ -15,7 +15,6 @@ const REPOSITORY = new URL('..', import.meta.url).pathname;
 const RESULTS = join(REPOSITORY, 'bench/results');
 const RUN_DEADLINE_MS = 46 * 60_000;
 const CLAUDE_TIMEOUT_MS = 20 * 60_000;
-const BLOCKING = new Set(['blocker', 'major']);
 const DEFAULT_CLAUDE_PROMPT = 'Review these code changes for correctness, security, regression and test-quality defects. Report only concrete defects with a failure scenario.';
 const CLAUDE_TOOLS = ['Read', 'Grep', 'Glob', 'Bash(git diff:*)', 'Bash(git status:*)', 'Bash(git log:*)', 'Bash(git show:*)'];
 
@@ -69,7 +68,7 @@ async function runPlugin(live, fixture, directory, options) {
     rounds: state.round,
     complete: review?.complete,
     findings: review?.issues ?? [],
-    fixRan: Boolean(review?.issues?.some((issue) => BLOCKING.has(issue.severity))),
+    fixRan: Boolean(state.history?.some((entry) => entry.fix)),
     reviewer: state.reviewerModel,
     reviewerSession: state.reviewerID,
     fixerSession: session.id,

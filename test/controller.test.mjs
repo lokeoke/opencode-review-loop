@@ -131,3 +131,22 @@ test('a disputed minor finding is recorded without stopping; a disputed blocker 
   blockerRun.fixCompleted();
   assert.equal(blockerRun.state.phase, 'stopped');
 });
+
+test('a minor-only fix pass that leaves the code unchanged passes instead of stopping as oscillation', () => {
+  const run = new Run({ id: 'run-minor-unchanged' });
+  run.checked('same');
+  run.submitReview(review([minor]));
+  run.reviewCompleted('same');
+  run.submitFix({ summary: 'Input cannot be empty here.', disputed: ['empty-input'] });
+  run.fixCompleted();
+  run.checked('same');
+  assert.equal(run.state.phase, 'passed');
+  const blocked = new Run({ id: 'run-blocker-unchanged' });
+  blocked.checked('same');
+  blocked.submitReview(review([finding]));
+  blocked.reviewCompleted('same');
+  blocked.submitFix({ summary: 'Attempted fix', disputed: [] });
+  blocked.fixCompleted();
+  blocked.checked('same');
+  assert.equal(blocked.state.phase, 'stopped');
+});

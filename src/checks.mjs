@@ -9,22 +9,22 @@ const PATH_MARKER = '__REVIEW_LOOP_PATH__';
 const COMMAND_NOT_FOUND = 127;
 
 // OpenCode Desktop starts the service with launchd's minimal PATH, so tools the user installed
-// (node, npm, Homebrew) are missing from checks. Ask the user's own interactive login shell for its
-// PATH, the way a terminal would see it, and keep the service entries after it.
-export function resolveShellPath({ shell = process.env.SHELL || userInfo().shell || '/bin/sh', fallback = process.env.PATH ?? '', timeoutMs = SHELL_PATH_TIMEOUT_MS } = {}) {
+// (node, npm, Homebrew) are missing from checks. Ask the user's own interactive login shell, the way a
+// terminal would see it. `env` prints PATH colon-separated in every shell, fish included; lines before
+// the marker are profile output and are ignored. Resolves undefined when the shell gives no PATH.
+function readShellPath({ shell = process.env.SHELL || userInfo().shell || '/bin/sh', timeoutMs = SHELL_PATH_TIMEOUT_MS } = {}) {
   return new Promise((resolve) => {
     let output = '', done = false;
     const finish = () => {
       if (done) return;
       done = true;
       clearTimeout(timer);
-      const line = output.split('\n').find((entry) => entry.startsWith(PATH_MARKER));
-      const shellPath = line?.slice(PATH_MARKER.length).trim();
-      resolve(shellPath ? [...new Set([...shellPath.split(':'), ...fallback.split(':')].filter(Boolean))].join(':') : fallback);
+      const environment = output.split(PATH_MARKER).slice(1).join(PATH_MARKER).split('\n');
+      resolve(environment.find((line) => line.startsWith('PATH='))?.slice('PATH='.length).trim() || undefined);
     };
     let child;
-    try { child = spawn(shell, ['-ilc', `printf '\\n${PATH_MARKER}%s\\n' "$PATH"`], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] }); }
-    catch { resolve(fallback); return; }
+    try { child = spawn(shell, ['-ilc', `echo ${PATH_MARKER}; /usr/bin/env`], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] }); }
+    catch { resolve(undefined); return; }
     const timer = setTimeout(() => {
       try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ }
       finish();
@@ -35,8 +35,22 @@ export function resolveShellPath({ shell = process.env.SHELL || userInfo().shell
   });
 }
 
+// The login shell PATH comes first; the service entries stay after it.
+const mergePath = (shellPath, fallback) => (shellPath ? [...new Set([...shellPath.split(':'), ...fallback.split(':')].filter(Boolean))].join(':') : fallback);
+
+export async function resolveShellPath({ fallback = process.env.PATH ?? '', ...options } = {}) {
+  return mergePath(await readShellPath(options), fallback);
+}
+
+// Cached for the service lifetime once the shell answered; a failed lookup is retried by the next check.
 let shellPath;
-export const checkPath = () => (shellPath ??= resolveShellPath());
+export function checkPath() {
+  shellPath ??= readShellPath().then((path) => {
+    if (!path) shellPath = undefined;
+    return mergePath(path, process.env.PATH ?? '');
+  });
+  return shellPath;
+}
 
 export function runCheck(command, cwd, { signal, timeoutMs = CHECK_TIMEOUT_MS, path = process.env.PATH } = {}) {
   if (process.platform === 'win32') throw new Error('Checks currently require a POSIX host (macOS or Linux).');

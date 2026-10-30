@@ -204,7 +204,7 @@ export class Engine {
 
   describe(active) {
     const state = active.run.state;
-    const assumptions = state.history.at(-1)?.review.assumptions ?? [];
+    const assumptions = state.submission?.assumptions ?? [];
     const stopped = state.phase === 'stopped'
       ? `\nStopped during ${state.stoppedPhase ?? 'an unknown phase'}; findings and partial edits are not verified. Inspect status and changes before starting a new review. Unconfirmed cleanup retains the worktree claim.`
       : '';

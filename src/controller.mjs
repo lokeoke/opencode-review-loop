@@ -17,6 +17,13 @@ export class Run {
 
   checked(fingerprint) {
     this.requirePhase('checking');
+    // Code unchanged since a review with no blocking findings (a minor fix pass that edited nothing): that
+    // review and the checks just run on the same code stand, so the run passes instead of looping.
+    const last = this.state.history.at(-1);
+    if (last?.fingerprint === fingerprint && !last.review.issues.some((issue) => BLOCKING.has(issue.severity))) {
+      this.state.phase = 'passed';
+      return;
+    }
     if (this.state.history.some((entry) => entry.fingerprint === fingerprint)) return this.stop('No code progress or fix/revert oscillation.');
     this.state.fingerprint = fingerprint;
     this.state.phase = 'reviewing';
