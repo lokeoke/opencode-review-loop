@@ -46,12 +46,20 @@ async function runPlugin(live, fixture, directory, options) {
   const args = [fixture.git && `--base ${fixture.git.base}`, options.reviewer && `--reviewer ${options.reviewer}`].filter(Boolean).join(' ');
   const preview = await live.command(session.id, `start ${args}`);
   if (!preview.text.includes(INPUT_WARNING)) throw new Error(`Candidate warning not loaded in the service; refusing to run. Preview: ${preview.text}`);
-  const response = await live.command(session.id, `start ${args} --check ${JSON.stringify(fixture.check)}`);
-  if (response.text.startsWith('Review loop:')) throw new Error(response.text);
-  const worktree = await realpath(directory);
-  const state = await waitForTerminal({ ...live, store: new RunStore(), worktree, sessionID: session.id, deadline: Date.now() + RUN_DEADLINE_MS, onPhase: (phase) => console.log(`  ${phase}`) });
+  const stop = () => live.command(session.id, 'stop').catch(() => console.error('  Unable to confirm cancellation; inspect retained run state.'));
+  let state;
+  // The run may start even when the start request fails, so every failure from here on cancels it.
+  try {
+    const response = await live.command(session.id, `start ${args} --check ${JSON.stringify(fixture.check)}`);
+    if (response.text.startsWith('Review loop:')) throw new Error(response.text);
+    const worktree = await realpath(directory);
+    state = await waitForTerminal({ ...live, store: new RunStore(), worktree, sessionID: session.id, deadline: Date.now() + RUN_DEADLINE_MS, onPhase: (phase) => console.log(`  ${phase}`) });
+  } catch (error) {
+    await stop();
+    throw error;
+  }
   if (!state) {
-    await live.command(session.id, 'stop').catch(() => console.error('  Unable to confirm cancellation; inspect retained run state.'));
+    await stop();
     return { outcome: 'timeout', findings: [], fixerSession: session.id };
   }
   const review = state.history?.[0]?.review ?? state.submission;

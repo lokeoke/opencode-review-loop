@@ -34,9 +34,10 @@ let started = false;
 try {
   const preview = await command('start');
   if (!preview.text.includes(INPUT_WARNING)) throw new Error('Candidate warning not loaded in the service; refusing to run the smoke.');
+  // The run may start even when this request fails, so cancellation is due from here on.
+  started = true;
   const response = await command('start --check "node access.test.mjs"');
   if (response.text.startsWith('Review loop:')) throw new Error(response.text);
-  started = true;
   const state = await waitForTerminal({ api, store, worktree, sessionID: session.id, deadline, onPhase: console.log });
   if (state) {
     terminal = true;
