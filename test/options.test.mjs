@@ -52,3 +52,22 @@ test('a branch base keeps its full name in the scope label; only commit ids are 
   assert.match(describeScope({ base: 'feature/login' }), /against feature\/login$/);
   assert.match(describeScope({ base: 'main' }, 'a'.repeat(40)), /against aaaaaaa$/);
 });
+
+test('the reviewer runs at high reasoning effort when its model offers it', () => {
+  const variants = (...ids) => ids.map((id) => ({ id }));
+  const models = [{ ...model('claude-opus-5.5'), variants: variants('low', 'medium', 'high', 'max') }, { ...model('gpt-6.1-sol'), variants: [] }];
+  assert.deepEqual(selectReviewer(models, { id: 'gpt-6.1-terra' }), { providerID: 'github-copilot', id: 'claude-opus-5.5', variant: 'high' });
+  assert.deepEqual(selectReviewer(models, { id: 'claude-sonnet-5.5' }), { providerID: 'github-copilot', id: 'gpt-6.1-sol' });
+  assert.equal(selectReviewer(models, { id: 'gpt-6.1-terra' }, { reviewerVariant: 'low' }).variant, 'low');
+  assert.throws(() => selectReviewer(models, { id: 'gpt-6.1-terra' }, { reviewerVariant: 'turbo' }), /variant turbo.*low, medium, high, max/);
+});
+
+test('the strongest different-lineage reviewer is preferred', () => {
+  const models = [model('claude-sonnet-5.5'), model('claude-opus-5.5'), model('gpt-6.1-sol')];
+  assert.equal(selectReviewer(models, { id: 'gpt-6.1-terra' }).id, 'claude-opus-5.5');
+});
+
+test('reviewer variant is an explicit option', () => {
+  assert.equal(parseCommand('start --reviewer-variant medium').reviewerVariant, 'medium');
+  assert.throws(() => parseCommand('start --reviewer-variant'), /Missing or invalid value/);
+});

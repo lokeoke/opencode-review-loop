@@ -1,7 +1,10 @@
 import { parsePullRequestRef } from './pr.mjs';
 
 export const COPILOT = 'github-copilot';
-const PREFERENCES = ['claude-sonnet-5.5', 'gpt-6.1-sol', 'gemini-4-argon'];
+// Strongest first within each lineage; selection takes the first one outside the fixer's lineage.
+const PREFERENCES = ['claude-opus-5.5', 'gpt-6.1-sol', 'claude-sonnet-5.5', 'gemini-4-argon'];
+// Default effort produced shallow reviews; higher effort is worth its cost for an independent review.
+const REVIEWER_VARIANT = 'high';
 
 function tokenize(input) {
   const tokens = [];
@@ -44,12 +47,13 @@ export function parseCommand(input = '') {
     }
     if (key === '--allow-same-family') { result.allowSameFamily = true; continue; }
     if (key === '--include-uncommitted') { result.includeUncommitted = true; continue; }
-    if (!['--base', '--goal', '--check', '--reviewer', '--confirm'].includes(key)) throw new Error(`Unknown option: ${key}`);
+    if (!['--base', '--goal', '--check', '--reviewer', '--reviewer-variant', '--confirm'].includes(key)) throw new Error(`Unknown option: ${key}`);
     if (key !== '--check' && seen.has(key)) throw new Error(`Duplicate option: ${key}`);
     seen.add(key);
     const value = args[++i];
     if (!value?.trim() || value.startsWith('--') || value.includes('\0') || value.length > 8000) throw new Error(`Missing or invalid value for ${key}.`);
     if (key === '--check') result.checks.push(value);
+    else if (key === '--reviewer-variant') result.reviewerVariant = value;
     else result[key.slice(2)] = value;
   }
   if (result.pr && seen.has('--base')) throw new Error('A pull request defines its own base; remove --base.');
@@ -73,5 +77,8 @@ export function selectReviewer(models, fixer, options = {}) {
   const selected = candidates.find((model) => lineage(model.id) && lineage(fixer.id) && lineage(model.id) !== lineage(fixer.id))
     ?? (options.allowSameFamily ? candidates[0] : undefined);
   if (!selected) throw new Error('No approved different-lineage Copilot reviewer available. Select --reviewer or explicitly --allow-same-family.');
-  return { providerID: selected.providerID, id: selected.id };
+  const variants = (selected.variants ?? []).map((variant) => variant.id);
+  if (options.reviewerVariant && !variants.includes(options.reviewerVariant)) throw new Error(`Reviewer ${selected.id} has no variant ${options.reviewerVariant}. Available: ${variants.join(', ') || 'none'}.`);
+  const variant = options.reviewerVariant ?? (variants.includes(REVIEWER_VARIANT) ? REVIEWER_VARIANT : undefined);
+  return { providerID: selected.providerID, id: selected.id, ...(variant ? { variant } : {}) };
 }

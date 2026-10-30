@@ -215,3 +215,18 @@ test('progress history is bounded and each delivery channel receives the termina
   assert.equal(notifications.filter((text) => text.startsWith('Review loop STOPPED')).length, 1);
   assert.equal(f.reports.filter((text) => text.startsWith('Review loop STOPPED')).length, 1, 'transcript copy is delivered once, never skipped');
 });
+
+test('the reviewer session uses the selected reasoning variant and reports it', async (t) => {
+  const f = await fixture(t);
+  f.ctx.model.list = async () => ({ data: [{ id: 'claude-sonnet-5.5', providerID: 'github-copilot', enabled: true, capabilities: { tools: true }, variants: [{ id: 'medium' }, { id: 'high' }] }] });
+  f.setPrompt(async () => {
+    const active = f.engine.activeFor('fixer');
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, issues: [], resolutions: [] });
+    f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [{ type: 'tool', name: 'review_loop_submit_review', state: { status: 'completed' } }] }]);
+  });
+  const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
+  await task.done;
+  assert.deepEqual(f.sessions.get('reviewer').model, { providerID: 'github-copilot', id: 'claude-sonnet-5.5', variant: 'high' });
+  assert.equal((await f.engine.status('fixer')).phase, 'passed');
+  assert.match(f.reports.at(-1), /Reviewer: github-copilot\/claude-sonnet-5\.5 \(high\)/);
+});

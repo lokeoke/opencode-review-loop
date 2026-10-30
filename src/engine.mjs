@@ -25,6 +25,7 @@ const DIAGNOSTIC_ERROR_TYPES = new Set(['validation', 'invalid_input', 'tool.exe
 const ACTIVE_RUNS = Symbol.for('opencode-review-loop.active.v1');
 globalThis[ACTIVE_RUNS] ??= new Map();
 
+const modelLabel = (model) => `${model.providerID}/${model.id}${model.variant ? ` (${model.variant})` : ''}`;
 function sameModel(a, b) { return a?.providerID === b?.providerID && a?.id === b?.id && (a?.variant ?? 'default') === (b?.variant ?? 'default'); }
 
 export class Engine {
@@ -117,7 +118,7 @@ export class Engine {
       active.initial = await scope.snapshot();
       run.state.files = active.initial.files;
       if (!active.initial.files.length) throw new Error('No changes against the selected base.');
-      await this.progress(active, `Scope: ${active.initial.files.length} files against ${scope.baseSha}. Reviewer: ${active.reviewerModel.providerID}/${active.reviewerModel.id}.\n${INPUT_WARNING}`);
+      await this.progress(active, `Scope: ${active.initial.files.length} files against ${scope.baseSha}. Reviewer: ${modelLabel(active.reviewerModel)}.\n${INPUT_WARNING}`);
       if (!active.checks?.length) throw new Error('Checks need approval. Re-run with explicit --check commands (for example --check "npm test"). No checks or model calls were executed.');
       while (!run.terminal) {
         this.ensureRunning(active);
@@ -200,7 +201,7 @@ export class Engine {
     const stopped = state.phase === 'stopped'
       ? `\nStopped during ${state.stoppedPhase ?? 'an unknown phase'}; findings and partial edits are not verified. Inspect status and changes before starting a new review. Unconfirmed cleanup retains the worktree claim.`
       : '';
-    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${state.maxReviews} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}\nReviewer: ${active.reviewerModel.providerID}/${active.reviewerModel.id}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
+    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${state.maxReviews} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}\nReviewer: ${modelLabel(active.reviewerModel)}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
   }
 
   ensureRunning(active) {
