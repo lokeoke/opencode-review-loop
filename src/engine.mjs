@@ -4,7 +4,7 @@ import { Run } from './controller.mjs';
 import { GitScope } from './git.mjs';
 import { RunStore } from './storage.mjs';
 import { selectReviewer } from './options.mjs';
-import { runCheck } from './checks.mjs';
+import { checkPath, runCheck } from './checks.mjs';
 import { fixPrompt, reviewPrompt } from './prompts.mjs';
 import { checkPolicyFingerprint } from './check-policy.mjs';
 import { ReviewInputError, validateReview } from './contracts.mjs';
@@ -131,7 +131,7 @@ export class Engine {
           this.ensureRunning(active);
           if (await checkPolicyFingerprint(scope) !== active.checkPolicy) throw new Error('Approved check definitions changed; restart and reapprove before execution.');
           await this.progress(active, `Round ${run.state.round + 1}/${run.state.maxReviews} · Checking: ${command}`);
-          try { checks.push(await runCheck(command, scope.cwd, { signal: abort.signal })); }
+          try { checks.push(await runCheck(command, scope.cwd, { signal: abort.signal, path: await checkPath() })); }
           catch (error) {
             if (error.cleanupUnconfirmed) run.state.pendingProcessPID = error.pid;
             checks.push({ command, exitCode: error.exitCode ?? null, exitSignal: error.exitSignal ?? null, durationMs: error.durationMs ?? null, error: error.message });
