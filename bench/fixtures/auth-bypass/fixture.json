@@ -1,0 +1,7 @@
+{
+  "description": "Admin role added; anonymous (missing) user now passes the ownership check.",
+  "check": "node verify.mjs",
+  "defects": [
+    { "id": "anonymous-delete", "description": "!userId lets an anonymous caller delete any record.", "locations": [{ "file": "access.mjs", "lines": [5, 6] }] }
+  ]
+}

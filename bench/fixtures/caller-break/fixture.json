@@ -1,0 +1,7 @@
+{
+  "description": "formatPrice changes from a number to an options object; the unchanged report.mjs caller still passes a number.",
+  "check": "node verify.mjs",
+  "defects": [
+    { "id": "stale-caller", "description": "report.mjs passes a number, so cents is undefined and the summary shows $NaN.", "locations": [{ "file": "report.mjs", "lines": [5, 5] }, { "file": "lib/format.mjs", "lines": [3, 3] }] }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "description": "Real change: PR #3 (review loop reliability) at 8543758, the run that passed after a shallow review. No seeded defects; every finding is checked by hand.",
+  "git": { "base": "736712c28fa2d2010506f0d84af230a0db3b977c", "head": "8543758" },
+  "check": "npm test",
+  "defects": []
+}

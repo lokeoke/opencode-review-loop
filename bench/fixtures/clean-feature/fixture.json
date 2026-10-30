@@ -1,0 +1,5 @@
+{
+  "description": "Optional maxLength for slugify, with tests; no trailing separator after truncation.",
+  "check": "node verify.mjs",
+  "defects": []
+}

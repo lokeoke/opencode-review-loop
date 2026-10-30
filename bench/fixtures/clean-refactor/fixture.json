@@ -1,0 +1,5 @@
+{
+  "description": "Behaviour-preserving extraction of a trim helper.",
+  "check": "node verify.mjs",
+  "defects": []
+}

@@ -1,0 +1,7 @@
+{
+  "description": "Coupon support added; the percent clamp is removed and the tests that covered it are deleted.",
+  "check": "node verify.mjs",
+  "defects": [
+    { "id": "clamp-removed", "description": "Percent is no longer clamped, so >100 gives a negative price and <0 raises it.", "locations": [{ "file": "discount.mjs", "lines": [1, 3] }, { "file": "verify.mjs", "lines": [1, 4] }] }
+  ]
+}

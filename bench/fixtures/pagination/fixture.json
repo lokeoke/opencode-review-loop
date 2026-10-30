@@ -1,0 +1,8 @@
+{
+  "description": "Pagination metadata added with two boundary errors that the divisible test case hides.",
+  "check": "node verify.mjs",
+  "defects": [
+    { "id": "total-pages-floor", "description": "Math.floor drops the last partial page; should be Math.ceil.", "locations": [{ "file": "paginate.mjs", "lines": [5, 5] }] },
+    { "id": "has-next-boundary", "description": "<= reports a next page on the exact last page; should be <.", "locations": [{ "file": "paginate.mjs", "lines": [6, 6] }] }
+  ]
+}
