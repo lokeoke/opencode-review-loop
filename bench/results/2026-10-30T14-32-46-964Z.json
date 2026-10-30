@@ -1,0 +1,152 @@
+{
+  "startedAt": "2026-10-30T14:32:46.964Z",
+  "options": {
+    "runner": "plugin",
+    "runs": 3,
+    "fixer": "gpt-6.1-sol",
+    "claudePrompt": "Review these code changes for correctness, security, regression and test-quality defects. Report only concrete defects with a failure scenario.",
+    "only": [
+      "pr-3"
+    ]
+  },
+  "runs": [
+    {
+      "fixture": "pr-3",
+      "runner": "plugin",
+      "run": 1,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pr-3-Z3Owma",
+      "durationMs": 261264,
+      "outcome": "passed",
+      "rounds": 1,
+      "complete": true,
+      "findings": [
+        {
+          "id": "smoke-stop-gated-on-start-response",
+          "severity": "minor",
+          "file": "scripts/smoke.mjs",
+          "line": 89,
+          "problem": "The cleanup `stop` now runs only when `started` is true. `started` becomes true only after `command('start --check ...')` returns a parsed response that does not begin with 'Review loop:'. Before this change, `stop` was always attempted in the catch block. Now, if the start RPC fails on the client side after the service has already called `engine.start`, nothing stops the run. Examples are the 30 s `AbortSignal.timeout` in `api()`, a dropped connection, or an empty body that makes `.output`/`.text` throw.",
+          "failure_scenario": "The service accepts `start --check \"node access.test.mjs\"` and `engine.start` acquires the lease and begins `execute`. The HTTP response is lost or arrives after the 30 s client timeout. `command()` throws, `started` is still false, and the catch rethrows without calling `stop`. The live Copilot review/fix loop keeps spending usage unattended until it finishes or reaches RUN_TIMEOUT_MS (45 min). The operator sees only a transport error.",
+          "suggested_fix": "Set a separate flag such as `startRequested = true` immediately before sending the start command, and attempt `stop` when that flag is set and `!terminal`. `stop` is a no-op in the engine when no run is active for the session, so an unconditional best-effort stop also works. The preview-refusal path is unaffected because it throws before the start request is sent.",
+          "introduced_by": null
+        }
+      ],
+      "fixRan": false,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-opus-5.5",
+        "variant": "high"
+      },
+      "reviewerSession": "ses_e72c47722ffeSjL3icA62JWAsZ",
+      "fixerSession": "ses_e72c5bde2ffeTztIOICubEME5A",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": [
+          {
+            "id": "smoke-stop-gated-on-start-response",
+            "severity": "minor",
+            "file": "scripts/smoke.mjs",
+            "line": 89,
+            "problem": "The cleanup `stop` now runs only when `started` is true. `started` becomes true only after `command('start --check ...')` returns a parsed response that does not begin with 'Review loop:'. Before this change, `stop` was always attempted in the catch block. Now, if the start RPC fails on the client side after the service has already called `engine.start`, nothing stops the run. Examples are the 30 s `AbortSignal.timeout` in `api()`, a dropped connection, or an empty body that makes `.output`/`.text` throw.",
+            "failure_scenario": "The service accepts `start --check \"node access.test.mjs\"` and `engine.start` acquires the lease and begins `execute`. The HTTP response is lost or arrives after the 30 s client timeout. `command()` throws, `started` is still false, and the catch rethrows without calling `stop`. The live Copilot review/fix loop keeps spending usage unattended until it finishes or reaches RUN_TIMEOUT_MS (45 min). The operator sees only a transport error.",
+            "suggested_fix": "Set a separate flag such as `startRequested = true` immediately before sending the start command, and attempt `stop` when that flag is set and `!terminal`. `stop` is a no-op in the engine when no run is active for the session, so an unconditional best-effort stop also works. The preview-refusal path is unaffected because it throws before the start request is sent.",
+            "introduced_by": null
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "pr-3",
+      "runner": "plugin",
+      "run": 2,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pr-3-t29TPT",
+      "durationMs": 208861,
+      "outcome": "passed",
+      "rounds": 1,
+      "complete": true,
+      "findings": [
+        {
+          "id": "smoke-uncertain-start-not-stopped",
+          "severity": "minor",
+          "file": "scripts/smoke.mjs",
+          "line": 57,
+          "problem": "`started` is set to true only after the `start --check` request returns successfully. If that request fails after the service has already started the run, the catch block skips `command('stop')`. Examples are the `api()` 30-second `AbortSignal.timeout`, a connection reset, or a non-2xx response after `engine.start` succeeded. Before this change, the catch block always attempted the stop.",
+          "failure_scenario": "The service accepts `start --check \"node access.test.mjs\"` and `engine.start` creates the run. The HTTP response is then lost or takes longer than 30 seconds, for example because a slow `session.get` or `model.list` delays the response. `api()` throws, `started` is still false, the smoke exits without requesting cancellation, and a live review loop keeps spending Copilot usage until its 45-minute deadline.",
+          "suggested_fix": "Set `started = true` immediately before sending the `start --check` request. Alternatively, track that the request was attempted. `engine.stop` does nothing when no run is active, so a cancellation request is harmless if the start never took effect.",
+          "introduced_by": null
+        }
+      ],
+      "fixRan": false,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-opus-5.5",
+        "variant": "high"
+      },
+      "reviewerSession": "ses_e72c0a248ffeo7clWVLff8Mw4p",
+      "fixerSession": "ses_e72c1bec6ffeIUfdMnY3vFDUwN",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": [
+          {
+            "id": "smoke-uncertain-start-not-stopped",
+            "severity": "minor",
+            "file": "scripts/smoke.mjs",
+            "line": 57,
+            "problem": "`started` is set to true only after the `start --check` request returns successfully. If that request fails after the service has already started the run, the catch block skips `command('stop')`. Examples are the `api()` 30-second `AbortSignal.timeout`, a connection reset, or a non-2xx response after `engine.start` succeeded. Before this change, the catch block always attempted the stop.",
+            "failure_scenario": "The service accepts `start --check \"node access.test.mjs\"` and `engine.start` creates the run. The HTTP response is then lost or takes longer than 30 seconds, for example because a slow `session.get` or `model.list` delays the response. `api()` throws, `started` is still false, the smoke exits without requesting cancellation, and a live review loop keeps spending Copilot usage until its 45-minute deadline.",
+            "suggested_fix": "Set `started = true` immediately before sending the `start --check` request. Alternatively, track that the request was attempted. `engine.stop` does nothing when no run is active, so a cancellation request is harmless if the start never took effect.",
+            "introduced_by": null
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "pr-3",
+      "runner": "plugin",
+      "run": 3,
+      "directory": "/var/folders/84/kb5pphhn48s5yd3xk02ft43h0000gn/T/review-loop-bench-pr-3-uODsZk",
+      "durationMs": 197617,
+      "outcome": "passed",
+      "rounds": 1,
+      "complete": true,
+      "findings": [
+        {
+          "id": "smoke-stop-gated-on-response",
+          "severity": "minor",
+          "file": "scripts/smoke.mjs",
+          "line": 57,
+          "problem": "`started` becomes true only after `command('start --check ...')` returns and its text is checked. The catch block now sends `stop` only when `started && !terminal`. Before this change, the smoke always tried `stop` on failure. That was harmless when nothing was running, because `engine.stop` does nothing without an active run.",
+          "failure_scenario": "The service accepts `start --check` and `engine.start` launches the run, but the HTTP response fails. For example, the 30 s `AbortSignal.timeout` in `api()` fires, the connection drops, or `output` has an unexpected shape. The smoke then throws with `started === false`, skips `stop`, and exits. The live run keeps spending Copilot usage unattended until it finishes or hits the 45-minute run deadline, and nobody is told to cancel it.",
+          "suggested_fix": "Gate cancellation only on `!terminal`, or set `started = true` just before sending `start --check`. The 'Candidate warning not loaded' early exit can still skip `stop`: no start request was sent, and `stop` would be a harmless no-op anyway.",
+          "introduced_by": null
+        }
+      ],
+      "fixRan": false,
+      "reviewer": {
+        "providerID": "github-copilot",
+        "id": "claude-opus-5.5",
+        "variant": "high"
+      },
+      "reviewerSession": "ses_e72bd668cffeABPjwMu3WBD8Kp",
+      "fixerSession": "ses_e72be8b25ffe9KFwlsGG54bkNj",
+      "score": {
+        "caught": [],
+        "missed": [],
+        "unmatched": [
+          {
+            "id": "smoke-stop-gated-on-response",
+            "severity": "minor",
+            "file": "scripts/smoke.mjs",
+            "line": 57,
+            "problem": "`started` becomes true only after `command('start --check ...')` returns and its text is checked. The catch block now sends `stop` only when `started && !terminal`. Before this change, the smoke always tried `stop` on failure. That was harmless when nothing was running, because `engine.stop` does nothing without an active run.",
+            "failure_scenario": "The service accepts `start --check` and `engine.start` launches the run, but the HTTP response fails. For example, the 30 s `AbortSignal.timeout` in `api()` fires, the connection drops, or `output` has an unexpected shape. The smoke then throws with `started === false`, skips `stop`, and exits. The live run keeps spending Copilot usage unattended until it finishes or hits the 45-minute run deadline, and nobody is told to cancel it.",
+            "suggested_fix": "Gate cancellation only on `!terminal`, or set `started = true` just before sending `start --check`. The 'Candidate warning not loaded' early exit can still skip `stop`: no start request was sent, and `stop` would be a harmless no-op anyway.",
+            "introduced_by": null
+          }
+        ]
+      }
+    }
+  ]
+}
