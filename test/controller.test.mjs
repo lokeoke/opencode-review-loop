@@ -87,3 +87,47 @@ test('a supported finding can be fixed and explicitly resolved on re-review', ()
   run.reviewCompleted('after');
   assert.equal(run.state.phase, 'passed');
 });
+
+const minor = { ...finding, id: 'empty-input', severity: 'minor', problem: 'Empty input returns undefined.' };
+const review = (issues, resolutions = []) => ({ complete: true, limitations: [], assumptions: [], issues, resolutions });
+
+test('a new minor finding gets one fix pass, and a repeated one no longer holds the run', () => {
+  const run = new Run({ id: 'run-minor' });
+  run.checked('before');
+  run.submitReview(review([minor]));
+  run.reviewCompleted('before');
+  assert.equal(run.state.phase, 'fixing');
+  run.submitFix({ summary: 'Handled empty input.', disputed: [] });
+  run.fixCompleted();
+  run.checked('after');
+  run.submitReview(review([minor]));
+  run.reviewCompleted('after');
+  assert.equal(run.state.phase, 'passed');
+  assert.deepEqual(run.state.issues.map((issue) => issue.id), ['empty-input']);
+});
+
+test('minor findings on the last available review are reported without another fix', () => {
+  const run = new Run({ id: 'run-minor-limit', maxReviews: 1 });
+  run.checked('before');
+  run.submitReview(review([minor]));
+  run.reviewCompleted('before');
+  assert.equal(run.state.phase, 'passed');
+});
+
+test('a disputed minor finding is recorded without stopping; a disputed blocker still stops', () => {
+  const minorRun = new Run({ id: 'run-minor-dispute' });
+  minorRun.checked('before');
+  minorRun.submitReview(review([minor]));
+  minorRun.reviewCompleted('before');
+  minorRun.submitFix({ summary: 'Input cannot be empty here.', disputed: ['empty-input'] });
+  minorRun.fixCompleted();
+  assert.equal(minorRun.state.phase, 'checking');
+  assert.deepEqual(minorRun.state.history.at(-1).fix.disputed, ['empty-input']);
+  const blockerRun = new Run({ id: 'run-blocker-dispute' });
+  blockerRun.checked('before');
+  blockerRun.submitReview(review([finding, minor]));
+  blockerRun.reviewCompleted('before');
+  blockerRun.submitFix({ summary: 'Disagree.', disputed: ['auth-check'] });
+  blockerRun.fixCompleted();
+  assert.equal(blockerRun.state.phase, 'stopped');
+});

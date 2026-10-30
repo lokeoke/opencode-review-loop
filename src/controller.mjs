@@ -46,11 +46,15 @@ export class Run {
     }
     const blockingIds = (issues) => issues.filter((issue) => BLOCKING.has(issue.severity)).map((issue) => issue.id).sort().join(',');
     const repeated = previous.length && blockingIds(previous) === blockingIds(result.issues);
+    // Minor findings get exactly one fix attempt: a minor already reported in an earlier round never holds the run.
+    const seen = new Set(this.state.history.flatMap((entry) => entry.review.issues.map((issue) => issue.id)));
+    const newMinor = result.issues.some((issue) => !BLOCKING.has(issue.severity) && !seen.has(issue.id));
     this.state.issues = result.issues;
     this.state.history.push({ round: this.state.round, fingerprint, review: result });
     if (repeated) return this.stop('No progress: the same blocking findings remain.');
     if (blockingIds(result.issues) && this.state.round >= this.state.maxReviews) return this.stop('Review limit reached with blocking findings.');
-    this.state.phase = result.issues.some((issue) => BLOCKING.has(issue.severity)) ? 'fixing' : 'passed';
+    const blocking = result.issues.some((issue) => BLOCKING.has(issue.severity));
+    this.state.phase = blocking || (newMinor && this.state.round < this.state.maxReviews) ? 'fixing' : 'passed';
   }
 
   submitFix(result) {
@@ -61,7 +65,10 @@ export class Run {
 
   fixCompleted() {
     this.requirePhase('fixing');
-    if (!this.state.fix || this.state.fix.disputed.length) return this.stop('Fix missing or findings disputed; human decision needed.');
+    if (!this.state.fix) return this.stop('Fix missing; human decision needed.');
+    // A disputed minor finding is recorded for the report; a disputed blocker needs a human.
+    const blockingIds = new Set(this.state.issues.filter((issue) => BLOCKING.has(issue.severity)).map((issue) => issue.id));
+    if (this.state.fix.disputed.some((id) => blockingIds.has(id))) return this.stop('Blocking findings disputed; human decision needed.');
     this.state.history.at(-1).fix = this.state.fix;
     this.state.phase = 'checking';
   }
