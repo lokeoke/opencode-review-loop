@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { Run } from './controller.mjs';
-import { GitScope } from './git.mjs';
+import { GitScope, SOURCE_UNAVAILABLE } from './git.mjs';
 import { RunStore } from './storage.mjs';
 import { selectReviewer } from './options.mjs';
 import { checkPath, runCheck } from './checks.mjs';
@@ -9,7 +9,7 @@ import { fixPrompt, reviewPrompt } from './prompts.mjs';
 import { checkPolicyFingerprint } from './check-policy.mjs';
 import { ReviewInputError, validateReview } from './contracts.mjs';
 import { DENIAL_PREFIX } from './security.mjs';
-import { scopeKind } from './scope.mjs';
+import { describeOmissions, scopeKind } from './scope.mjs';
 import { INPUT_WARNING } from './command.mjs';
 
 export const PHASE_TIMEOUT_MS = 10 * 60_000;
@@ -82,7 +82,7 @@ export class Engine {
     const lease = await this.store.acquire(scope.root, id);
     if (this.disposed) { await lease.release(); throw new Error('Review-loop plugin unloaded during startup.'); }
     const run = new Run({ id });
-    const active = { owner: this, run, scope, lease, fixerID: sessionID, fixerModel: fixer.model, fixerAgent: fixer.agent, reviewerModel, checks: options.checks, checkPolicy, goal: options.goal, pullRequest: options.pullRequest, abort: new AbortController() };
+    const active = { owner: this, run, scope, lease, fixerID: sessionID, fixerModel: fixer.model, fixerAgent: fixer.agent, reviewerModel, checks: options.checks, checkPolicy, goal: options.goal, pullRequest: options.pullRequest, approvedSnapshot: options.approvedSnapshot, abort: new AbortController() };
     this.active.set(id, active);
     run.state.worktree = scope.root;
     run.state.directory = scope.cwd;
@@ -117,13 +117,16 @@ export class Engine {
       this.ensureRunning(active);
       await this.assertSession(active, active.fixerID);
       active.initial = await scope.snapshot();
+      if (active.approvedSnapshot && (active.initial.fingerprint !== active.approvedSnapshot.fingerprint || active.initial.index !== active.approvedSnapshot.index)) throw new Error('Scope changed since approval. Run start again.');
       run.state.files = active.initial.files;
+      run.state.omissions = active.initial.omissions;
       if (!active.initial.files.length) throw new Error('No changes against the selected base.');
-      await this.progress(active, `Scope: ${active.initial.files.length} files against ${scope.baseSha}. Reviewer: ${modelLabel(active.reviewerModel)}.\n${INPUT_WARNING}`);
+      await this.progress(active, `Scope: ${active.initial.files.length} files against ${scope.baseSha}. Reviewer: ${modelLabel(active.reviewerModel)}.${describeOmissions(active.initial.omissions)}\n${INPUT_WARNING}`);
       if (!active.checks?.length) throw new Error('Checks need approval. Re-run with explicit --check commands (for example --check "npm test"). No checks or model calls were executed.');
       while (!run.terminal) {
         this.ensureRunning(active);
         const before = await scope.snapshot();
+        if (run.state.round === 0 && before.fingerprint !== active.initial.fingerprint) throw new Error('Source changed before verification; restart and reapprove.');
         if (before.index !== active.initial.index) throw new Error('The Git index changed; automatic staging is not allowed.');
         const checks = [];
         run.state.checks.push({ fingerprint: before.fingerprint, results: checks });
@@ -146,9 +149,15 @@ export class Engine {
         // Every changed file must be inspected through the source tool before a complete review;
         // an embedded diff alone does not show the surrounding code.
         active.uncovered = new Set(checked.files);
+        run.state.omissions = checked.omissions;
         active.oversized = checked.oversized;
         active.diffCursor = new Map();
         if (run.terminal) break;
+        if (checked.files.length && checked.omissions.length === checked.files.length) {
+          run.submitReview({ complete: false, limitations: ['No selected files have inspectable content.'], assumptions: [], issues: [], resolutions: [] });
+          run.reviewCompleted(checked.fingerprint);
+          break;
+        }
         await active.lease.save(run.state);
         if (!active.reviewerID) {
           const reviewer = await this.ctx.session.create({
@@ -208,7 +217,10 @@ export class Engine {
     const stopped = state.phase === 'stopped'
       ? `\nStopped during ${state.stoppedPhase ?? 'an unknown phase'}; findings and partial edits are not verified. Inspect status and changes before starting a new review. Unconfirmed cleanup retains the worktree claim.`
       : '';
-    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${state.maxReviews} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}\nReviewer: ${modelLabel(active.reviewerModel)}${state.reviewerID ? `\nReviewer session: ${state.reviewerID}` : ''}${state.reviewerNote ? `\nReviewer note (model text, unverified): ${state.reviewerNote}` : ''}${assumptions.length ? `\nReviewer assumptions (unverified): ${assumptions.join(' ')}` : ''}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
+    const incomplete = state.phase === 'incomplete' ? '\nPartial findings are unverified. No automatic fixes or PASS; inspect omissions and complete coverage manually.' : '';
+    const omissions = describeOmissions(state.omissions);
+    const checks = state.checks?.at(-1)?.results ?? [];
+    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${state.maxReviews} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}${incomplete}${omissions}\nChecks: ${checks.map((check) => `${check.command}: ${check.error ?? `exit ${check.exitCode}`}`).join('; ') || 'none completed'}\nReviewer: ${modelLabel(active.reviewerModel)}${state.reviewerID ? `\nReviewer session: ${state.reviewerID}` : ''}${state.reviewerNote ? `\nReviewer note (model text, unverified): ${state.reviewerNote}` : ''}${assumptions.length ? `\nReviewer assumptions (unverified): ${assumptions.join(' ')}` : ''}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
   }
 
   ensureRunning(active) {
@@ -280,10 +292,13 @@ export class Engine {
         if (active.changedFiles.has(issue.file) || previous) continue;
         if (!issue.introduced_by || !active.changedFiles.has(issue.introduced_by.file)) throw new ReviewInputError('An unchanged-file finding needs introduced_by evidence anchored in the current diff.');
         for (const [path, line] of [[issue.file, issue.line], [issue.introduced_by.file, issue.introduced_by.line]]) {
-          if ((await active.scope.source({ operation: 'read', path, offset: line, limit: 1 })).startsWith('[No matching')) throw new ReviewInputError(`Evidence line ${path}:${line} does not exist.`);
+          const evidence = await active.scope.source({ operation: 'read', path, offset: line, limit: 1 });
+          if (!evidence.startsWith(`${path}:${line}: `)) throw new ReviewInputError(`Evidence line ${path}:${line} does not exist or is unavailable.`);
         }
       }
       if (input.complete && input.limitations.length) throw new ReviewInputError('A review that lists coverage limitations is not complete. Resolve them by inspecting more source, or submit complete=false.');
+      active.run.state.omissions = [...active.scope.omissions].map(([path, reason]) => ({ path, reason }));
+      if (input.complete && active.run.state.omissions.length) throw new ReviewInputError('Complete review refused: selected files are unavailable. Review available content and submit complete=false; omissions are retained by the controller.');
       if (input.complete && active.uncovered.size) {
         const shown = [...active.uncovered].slice(0, 10).join(', ');
         const how = active.oversized ? 'Read each diff to its end with review_loop_source operation "diff"' : 'Open each with review_loop_source operation "read" (or page its "diff" to the end)';
@@ -313,12 +328,12 @@ export class Engine {
       // Coverage only advances when a page starts exactly where the previous one ended, so skipped pages never count.
       if (input.offset === undefined || input.offset === 1 || input.offset === active.diffCursor.get(input.path)) {
         active.diffCursor.set(input.path, page.next);
-        if (page.complete) active.uncovered.delete(input.path);
+        if (page.complete && !page.unavailable) active.uncovered.delete(input.path);
       }
       return page.text;
     }
     const result = await active.scope.source(input);
-    if (input.operation === 'read' && !active.oversized) active.uncovered.delete(input.path);
+    if (input.operation === 'read' && !active.oversized && !result.startsWith(SOURCE_UNAVAILABLE) && result.startsWith(`${input.path}:`)) active.uncovered.delete(input.path);
     return result;
   }
 

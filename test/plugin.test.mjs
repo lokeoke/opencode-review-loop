@@ -112,6 +112,18 @@ test('starting from a pull request URL previews that pull request and its checks
   assert.match(preview.confirmation, /^start --confirm /);
 });
 
+test('preview explains withheld content without blocking approval or disclosing its contents', async (t) => {
+  const f = await pullRequestFixture(t);
+  await writeFile(join(f.root, '.env'), 'PREVIEW_MUST_NOT_EXPOSE_THIS');
+  await writeFile(join(f.root, 'a.js'), '3');
+  const preview = await f.run('');
+  assert.match(preview.confirmation, /^start --confirm /);
+  assert.match(preview.text, /Omissions.*1/s);
+  assert.match(preview.text, /\.env.*not tracked/s);
+  assert.match(preview.text, /incomplete/i);
+  assert.doesNotMatch(preview.text, /PREVIEW_MUST_NOT_EXPOSE_THIS/);
+});
+
 test('uncommitted edits are never silently reviewed as part of a pull request', async (t) => {
   const f = await pullRequestFixture(t);
   await writeFile(join(f.root, 'stray.js'), 'x');

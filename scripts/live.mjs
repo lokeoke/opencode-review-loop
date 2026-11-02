@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { TERMINAL_PHASES } from '../src/controller.mjs';
 
 // Shared by the live smoke and benchmark: both drive the existing authenticated local
 // OpenCode service and refuse to continue if that service is replaced mid-run.
@@ -37,7 +38,7 @@ export async function waitForTerminal({ api, store, worktree, sessionID, deadlin
     // Fails fast if the service died or was replaced; otherwise frozen run state would wait out the deadline.
     await api('get', `/api/session/${sessionID}`);
     const state = await store.read(worktree);
-    if (state && ['passed', 'stopped'].includes(state.phase)) return state;
+    if (state && TERMINAL_PHASES.has(state.phase)) return state;
     if (state) {
       const phase = `${state.phase}, round ${state.round}`;
       if (phase !== lastPhase) onPhase(phase);

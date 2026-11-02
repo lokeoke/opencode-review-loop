@@ -14,3 +14,15 @@ export function describeScope(options, baseSha) {
   const base = baseSha ?? options.base;
   return `branch/worktree changes against ${/^[0-9a-f]{40}$/.test(base) ? base.slice(0, 7) : base}`;
 }
+
+const MAX_SHOWN_OMISSIONS = 10;
+
+export function summarizeOmissions(omissions = []) {
+  return { total: omissions.length, paths: omissions.slice(0, MAX_SHOWN_OMISSIONS) };
+}
+
+export function describeOmissions(omissions = []) {
+  if (!omissions.length) return '';
+  const summary = summarizeOmissions(omissions);
+  return `\nOmissions (${summary.total} total; first ${MAX_SHOWN_OMISSIONS} shown):\n${summary.paths.map(({ path, reason }) => `${JSON.stringify(path)}: ${reason}`).join('\n')}\nReview is incomplete while selected content is unavailable; no automatic fixes or PASS. Full omission list is retained in status.`;
+}
