@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdir, symlink, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { test } from 'node:test';
 import { fixture } from '../test-support/engine-fixture.mjs';
+import { GitScope } from '../src/git.mjs';
 
 test('the reviewer session uses the selected reasoning variant and reports it', async (t) => {
   const f = await fixture(t);
@@ -44,7 +48,7 @@ test('a review that names coverage limitations cannot claim to be complete', asy
   });
   await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
   const state = await f.engine.status('fixer');
-  assert.equal(state.phase, 'stopped');
+  assert.equal(state.phase, 'incomplete');
   assert.match(state.reason, /Incomplete review: Did not trace callers of value\./);
 });
 
@@ -110,4 +114,128 @@ test('a refused incomplete-coverage submission can be corrected within the same 
   });
   await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
   assert.equal((await f.engine.status('fixer')).phase, 'passed');
+});
+
+test('withheld content cannot clear coverage and partial findings survive without a fix pass', async (t) => {
+  const f = await fixture(t, { autoCover: false });
+  await writeFile(join(f.directory, '.env'), 'UNTRACKED_SECRET_NOT_FOR_REVIEW');
+  let turns = 0;
+  const issue = { id: 'value-regression', severity: 'major', file: 'app.js', line: 1, problem: 'Incorrect value', failure_scenario: 'Callers receive the wrong value.', suggested_fix: 'Restore the expected value.' };
+  f.setPrompt(async (input) => {
+    turns += 1;
+    assert.equal(input.sessionID, 'reviewer');
+    assert.match(input.text, /omissions/);
+    assert.ok(!input.text.includes('UNTRACKED_SECRET_NOT_FOR_REVIEW'));
+    const active = f.engine.activeFor('fixer');
+    await f.engine.source('reviewer', { operation: 'read', path: 'app.js' });
+    assert.match(await f.engine.source('reviewer', { operation: 'read', path: '.env' }), /^\[Unavailable:/);
+    assert.match(await f.engine.source('reviewer', { operation: 'diff', path: '.env' }), /^\[Unavailable:/);
+    const review = { runId: active.run.state.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [issue], resolutions: [] };
+    await assert.rejects(f.engine.submitReview('reviewer', review), /unavailable|not inspected/i);
+    await f.engine.submitReview('reviewer', { ...review, complete: false });
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.phase, 'incomplete');
+  assert.equal(turns, 1);
+  assert.deepEqual(state.issues, [issue]);
+  assert.equal(state.history.length, 1);
+  assert.deepEqual(state.omissions.map((entry) => entry.path), ['.env']);
+  assert.match(f.reports.at(-1), /INCOMPLETE/);
+  assert.match(f.reports.at(-1), /value-regression/);
+  assert.match(f.reports.at(-1), /\.env/);
+});
+
+test('a changed approved snapshot stops before checks or reviewer disclosure', async (t) => {
+  const f = await fixture(t);
+  const snapshot = await (await GitScope.open(f.directory, 'main')).snapshot();
+  await writeFile(join(f.directory, 'app.js'), 'changed after approval');
+  f.setPrompt(async () => assert.fail('Changed approval must not invoke a model'));
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 7'], approvedSnapshot: { fingerprint: snapshot.fingerprint, index: snapshot.index } })).done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.phase, 'stopped');
+  assert.match(state.reason, /changed since approval/i);
+  assert.deepEqual(state.checks, []);
+});
+
+test('a scope with no inspectable content completes as incomplete without a model session', async (t) => {
+  const f = await fixture(t);
+  await writeFile(join(f.directory, 'app.js'), 'export const value = 1;\n');
+  await writeFile(join(f.directory, '.env'), 'WITHHELD');
+  f.ctx.session.create = async () => assert.fail('There is no content for a reviewer');
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.phase, 'incomplete');
+  assert.equal(state.reviewerID, undefined);
+  assert.equal(state.checks[0].results[0].exitCode, 0);
+  assert.match(state.reason, /No selected files have inspectable content/);
+});
+
+test('failed approved checks remain fatal and visible even when content is omitted', async (t) => {
+  const f = await fixture(t);
+  await writeFile(join(f.directory, '.env'), 'WITHHELD');
+  f.setPrompt(async () => assert.fail('A failed check must not start a reviewer'));
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 7'] })).done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.phase, 'stopped');
+  assert.equal(state.checks[0].results[0].exitCode, 7);
+  assert.match(f.reports.at(-1), /Check failed with exit 7/);
+  assert.match(f.reports.at(-1), /\.env/);
+});
+
+test('staging a withheld file during review never grants disclosure and stops on index change', async (t) => {
+  const f = await fixture(t, { autoCover: false });
+  await writeFile(join(f.directory, '.env'), 'NEVER_DISCLOSE_AFTER_STAGING');
+  f.setPrompt(async () => {
+    execFileSync('git', ['add', '.env'], { cwd: f.directory });
+    for (const input of [{ operation: 'read', path: '.env' }, { operation: 'diff', path: '.env' }, { operation: 'search', query: 'NEVER_DISCLOSE' }]) assert.doesNotMatch(await f.engine.source('reviewer', input), /NEVER_DISCLOSE_AFTER_STAGING/);
+    const active = f.engine.activeFor('fixer');
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: false, limitations: [], assumptions: [], issues: [], resolutions: [] });
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.phase, 'stopped');
+  assert.match(state.reason, /index changed during review/i);
+});
+
+test('large omission lists stay complete in status without overwhelming reviewer input or submission limits', async (t) => {
+  const f = await fixture(t, { autoCover: false });
+  for (let i = 0; i < 305; i++) await writeFile(join(f.directory, `.env.${i}`), 'WITHHELD');
+  f.setPrompt(async (input) => {
+    const data = JSON.parse(input.text.split('REVIEW INPUT (JSON data):\n')[1]);
+    assert.deepEqual(data.files, ['app.js']);
+    assert.equal(data.omissions.total, 305);
+    assert.ok(data.omissions.paths.length <= 10);
+    await f.engine.source('reviewer', { operation: 'read', path: 'app.js' });
+    const active = f.engine.activeFor('fixer');
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: false, limitations: [], assumptions: [], issues: [], resolutions: [] });
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.phase, 'incomplete');
+  assert.equal(state.omissions.length, 305);
+  assert.equal(state.files.length, 306);
+});
+
+test('intentional committed skill symlinks and environment examples complete a normal review', async (t) => {
+  const f = await fixture(t, { autoCover: false });
+  const git = (...args) => execFileSync('git', args, { cwd: f.directory, stdio: 'ignore' });
+  git('checkout', '-b', 'feature');
+  await mkdir(join(f.directory, '.claude', 'skills'), { recursive: true });
+  await symlink('../../.agents/skills/write-post', join(f.directory, '.claude', 'skills', 'write-post'));
+  await writeFile(join(f.directory, '.env.local.example'), 'EXAMPLE=placeholder\n');
+  git('add', '.claude/skills/write-post', '.env.local.example');
+  git('-c', 'user.name=T', '-c', 'user.email=t@example.invalid', 'commit', '-m', 'Intentional repository configuration');
+  f.setPrompt(async (input) => {
+    assert.match(input.text, /EXAMPLE=placeholder/);
+    assert.match(await f.engine.source('reviewer', { operation: 'read', path: '.claude/skills/write-post' }), /Symlink target.*\.agents\/skills\/write-post/);
+    await f.engine.source('reviewer', { operation: 'read', path: '.env.local.example' });
+    await f.engine.source('reviewer', { operation: 'read', path: 'app.js' });
+    const active = f.engine.activeFor('fixer');
+    await f.engine.submitReview('reviewer', { runId: active.run.state.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] });
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.phase, 'passed');
+  assert.deepEqual(state.omissions, []);
 });

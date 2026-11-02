@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { RunStore } from '../src/storage.mjs';
+import { waitForTerminal } from '../scripts/live.mjs';
 
 async function smokeWithReviewer(t, tools, { candidateLoaded = true, failStart = false } = {}) {
   const commands = [];
@@ -75,4 +76,15 @@ test('live smoke cancels the run when the start request fails after it was sent'
   const result = await smokeWithReviewer(t, ['review_loop_source', 'review_loop_submit_review'], { failStart: true });
   assert.notEqual(result.code, 0);
   assert.equal(result.commands.at(-1), 'stop');
+});
+
+test('live drivers recognize durable incomplete reviews as terminal without waiting out the deadline', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'review-loop-terminal-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new RunStore(join(root, 'state'));
+  const lease = await store.acquire(root, 'incomplete-run');
+  await lease.save({ id: 'incomplete-run', phase: 'incomplete', round: 1 });
+  await lease.release();
+  const state = await waitForTerminal({ api: async () => ({}), store, worktree: root, sessionID: 'fixer', deadline: Date.now() + 1000 });
+  assert.equal(state?.phase, 'incomplete');
 });

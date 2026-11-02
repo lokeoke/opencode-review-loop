@@ -4,10 +4,16 @@ Tests observe public commands, controller behavior, OpenCode API interactions, r
 
 Implementation started with failing tests for plugin registration and each new behavior slice. Tests and the minimal implementation were developed together, rather than writing a speculative complete suite first.
 
+## Symlink, disclosure and incomplete-review seams
+
+Agreed seams are `GitScope` snapshot/source/diff/edit authorization against real Git repositories, the command preview/approval and workflow/report boundary with fake external OpenCode sessions, and existing native edit-permission guards. Tests were added in red/green slices for target-only inspection, tracked sensitive-looking text, withheld content, partial findings, approval integrity and bounded omission presentation.
+
+Coverage includes target/mode changes, deletion, file↔symlink replacement, staged versus working-tree identity, dangling/cyclic/directory/external links, escaped/non-UTF-8 targets, unchanged referent contents, symlink ancestors, tracked and staged sensitive-looking text, withheld content across reads/searches/diffs and mid-review staging, binary/oversized omissions, inspection budgets, retained incomplete findings, no-content runs without model calls, failed checks and changed approvals. All of these deterministic tests avoid live provider usage. See [ADR 0005](adr/0005-inspection-disclosure-and-incomplete-reviews.md) for the disclosure tradeoff.
+
 ## Gates
 
 - `npm run check`: syntax-check all JavaScript source, scripts, and tests.
-- `npm test`: controller gates/resolutions, scope/index preservation, source restrictions, check failures/cancellation, global install/uninstall/collision protection, worktree exclusivity/archiving, and native session orchestration.
+- `npm test`: controller gates/resolutions, scope/index preservation, source restrictions, check failures/cancellation, global install/uninstall/collision protection, worktree exclusivity/archiving, and native session orchestration. File concurrency is capped at four so Git-heavy fixtures do not saturate the host and exhaust per-file timeouts.
 - `node scripts/smoke.mjs --live`: an explicitly usage-consuming, end-to-end Copilot run in a standalone temporary Git repository with no project-local OpenCode files and no npm requirement in the fixture.
 
 - `node scripts/benchmark.mjs --live`: an explicitly usage-consuming comparison of the plugin reviewer with a `claude -p` review on the fixtures in `bench/fixtures/`. Each fixture's own check passes on the defective change, so tests alone cannot catch the seeded defects; `test/benchmark.test.mjs` proves this and the fixture ranges without model usage. Findings count as catching a seeded defect only when the file matches and the line (or `introduced_by` anchor) falls in its recorded range; everything else is listed for manual assessment. Results go to `bench/results/`. A small benchmark is not statistical proof of general reliability.

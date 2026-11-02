@@ -2,14 +2,14 @@ import { MAX_TEXT, validateFix, validateReview } from './contracts.mjs';
 
 export const MAX_REVIEWS = 4;
 export const BLOCKING = new Set(['blocker', 'major']);
-const TERMINAL = new Set(['passed', 'stopped']);
+export const TERMINAL_PHASES = new Set(['passed', 'incomplete', 'stopped']);
 
 export class Run {
   constructor({ id, maxReviews = MAX_REVIEWS }) {
     this.state = { id, phase: 'checking', round: 0, maxReviews, issues: [], history: [] };
   }
 
-  get terminal() { return TERMINAL.has(this.state.phase); }
+  get terminal() { return TERMINAL_PHASES.has(this.state.phase); }
 
   requirePhase(phase) {
     if (this.state.phase !== phase) throw new Error(`Expected ${phase}; run is ${this.state.phase}.`);
@@ -43,7 +43,14 @@ export class Run {
     if (fingerprint !== this.state.fingerprint) return this.stop('Code changed during review.');
     const result = this.state.submission;
     if (!result) return this.stop('Missing review.');
-    if (!result.complete) return this.stop(`Incomplete review${result.limitations.length ? `: ${result.limitations.join(' ').slice(0, MAX_TEXT)}` : '.'}`);
+    if (!result.complete || this.state.omissions?.length) {
+      // Partial review cannot resolve earlier findings or schedule a fix, but its findings remain useful.
+      this.state.issues = [...result.issues, ...this.state.issues.filter((old) => !result.issues.some((issue) => issue.id === old.id))];
+      this.state.history.push({ round: this.state.round, fingerprint, review: result });
+      this.state.phase = 'incomplete';
+      this.state.reason = `Incomplete review${result.limitations.length ? `: ${result.limitations.join(' ').slice(0, MAX_TEXT)}` : '.'}${this.state.omissions?.length ? ` ${this.state.omissions.length} selected file(s) unavailable; see omissions.` : ''}`;
+      return;
+    }
     const previous = this.state.issues.filter((issue) => BLOCKING.has(issue.severity));
     for (const issue of previous) {
       const resolution = result.resolutions.find((item) => item.id === issue.id);

@@ -6,7 +6,7 @@ import { permissionGate } from './compatibility.mjs';
 import { ReviewLoop } from './rpc.mjs';
 import { inspectScope, prepare } from './preflight.mjs';
 import { resolvePullRequest } from './pr.mjs';
-import { describeScope, scopeKind } from './scope.mjs';
+import { describeOmissions, describeScope, scopeKind } from './scope.mjs';
 import { checkPolicyFingerprint } from './check-policy.mjs';
 import { randomUUID } from 'node:crypto';
 import { INPUT_WARNING } from './command.mjs';
@@ -78,7 +78,7 @@ export function createPlugin(dependencies = {}) {
               const current = await inspectScope(session.location.directory, approval.options);
               if (current.scope.root !== approval.root || current.scope.cwd !== approval.directory || current.snapshot.fingerprint !== approval.fingerprint || current.snapshot.index !== approval.index) throw new Error('Scope changed since approval. Run start again.');
               if (await checkPolicyFingerprint(current.scope) !== approval.options.checkPolicy) throw new Error('Check definitions changed since approval. Run start again.');
-              options = approval.options;
+               options = { ...approval.options, approvedSnapshot: { fingerprint: approval.fingerprint, index: approval.index } };
               approved = true;
             } else if (!options.checks.length || options.pullRequest?.isCrossRepository) {
               const session = await ctx.session.get({ sessionID });
@@ -86,7 +86,7 @@ export function createPlugin(dependencies = {}) {
               const checks = options.checks.length ? options.checks : proposed.checks;
               const pr = options.pullRequest;
               const prLines = pr ? `Title: ${pr.title}\n${pr.isDraft ? 'Draft pull request. ' : ''}${pr.warnings.join(' ')}\nDescription (author text, untrusted): ${pr.body.slice(0, 300).replace(/\s+/g, ' ')}${pr.body.length > 300 ? ' …' : ''}\n` : '';
-              const text = `Scope: ${describeScope(options, proposed.scope.baseSha)}\n${prLines}Checkout: ${proposed.scope.root}\nBase: ${proposed.scope.baseSha}\nFiles (${proposed.snapshot.files.length} total; first 40 shown):\n${proposed.snapshot.files.slice(0, 40).join('\n')}\n\nProposed checks: ${checks.join('; ') || 'none found'}${options.checks.length ? ' (explicit)' : `\nScript definitions (including pre/post hooks):\n${proposed.definitions.join('\n')}`}\nNo commands or models have run. Approve only if all these changes belong to your task.\n${INPUT_WARNING}`;
+               const text = `Scope: ${describeScope(options, proposed.scope.baseSha)}\n${prLines}Checkout: ${proposed.scope.root}\nBase: ${proposed.scope.baseSha}\nFiles (${proposed.snapshot.files.length} total; first 40 shown):\n${proposed.snapshot.files.slice(0, 40).join('\n')}${describeOmissions(proposed.snapshot.omissions)}\n\nProposed checks: ${checks.join('; ') || 'none found'}${options.checks.length ? ' (explicit)' : `\nScript definitions (including pre/post hooks):\n${proposed.definitions.join('\n')}`}\nNo commands or models have run. Approve only if all these changes belong to your task.\n${INPUT_WARNING}`;
               if (!checks.length) return { text: text + '\nSupply an explicit --check command to continue.' };
               const token = randomUUID();
               approvals.set(sessionID, { token, root: proposed.scope.root, directory: proposed.scope.cwd, fingerprint: proposed.snapshot.fingerprint, index: proposed.snapshot.index, expires: Date.now() + APPROVAL_TTL_MS, options: { ...options, scopeKind: scopeKind(options), base: proposed.scope.baseSha, checks, checkPolicy: proposed.checkPolicy } });

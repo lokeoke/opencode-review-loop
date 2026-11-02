@@ -8,3 +8,5 @@
 - **Code fingerprint:** The identity of the source state on which review and verification rely.
 - **Check:** A user-approved verification command.
 - **Worktree:** An independent Git checkout; the unit of exclusive run ownership.
+- **Omission:** A selected path whose content could not be inspected, with an explicit reason.
+- **Incomplete review:** A review with coverage gaps whose partial findings remain useful but do not establish a passing outcome.

@@ -2,6 +2,8 @@
 
 Coverage: five inline comments in review 5696684512 plus the user's ten-item pasted review, deduplicated. These are implementation outcomes, not external re-approval. No thread is automatically marked resolved.
 
+**Later policy update:** the historical symlink-read rejection and binary/file-size startup vetoes below are superseded by [ADR 0005](adr/0005-inspection-disclosure-and-incomplete-reviews.md). Inspection now exposes leaf-link metadata without following it; unsupported/withheld content becomes explicit incomplete coverage while available content is reviewed. Edit/traversal protections and bounded integrity remain enforced.
+
 | Concern | Outcome and evidence |
 | --- | --- |
 | Protected/symlink bypass | Fixed: reject existing symlink components, dangling aliases and ancestors of new paths. Git tests cover protected and external targets. Hostile concurrent replacement remains outside the application sandbox guarantee. |
