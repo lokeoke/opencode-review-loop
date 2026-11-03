@@ -43,7 +43,7 @@ export function validateReview(value) {
   for (const resolution of value.resolutions) {
     if (!ID.test(resolution.id) || resolved.has(resolution.id)) throw new ReviewInputError('Invalid or duplicate resolution id.');
     resolved.add(resolution.id);
-    if (!['fixed', 'open', 'disputed'].includes(resolution.status)) throw new ReviewInputError('Invalid resolution status.');
+    if (!['fixed', 'open', 'disputed', 'withdrawn'].includes(resolution.status)) throw new ReviewInputError('Invalid resolution status.');
     text(resolution.evidence, 'resolution evidence');
   }
   return value;
@@ -72,7 +72,7 @@ export const REVIEW_SCHEMA = object({
   round: { type: 'integer', minimum: 1 },
   complete: { type: 'boolean' },
   issues: array(finding),
-  resolutions: array(object({ id, status: { enum: ['fixed', 'open', 'disputed'] }, evidence: string })),
+  resolutions: array(object({ id, status: { enum: ['fixed', 'open', 'disputed', 'withdrawn'] }, evidence: string })),
   limitations: array(string),
   assumptions: array(string),
 });

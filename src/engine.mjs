@@ -5,7 +5,7 @@ import { GitScope, SOURCE_UNAVAILABLE } from './git.mjs';
 import { RunStore } from './storage.mjs';
 import { selectReviewer } from './options.mjs';
 import { checkPath, runCheck } from './checks.mjs';
-import { fixPrompt, reviewPrompt } from './prompts.mjs';
+import { fixPrompt, reviewPrompt, reviewRetryPrompt } from './prompts.mjs';
 import { checkPolicyFingerprint } from './check-policy.mjs';
 import { ReviewInputError, validateReview } from './contracts.mjs';
 import { DENIAL_PREFIX } from './security.mjs';
@@ -19,6 +19,8 @@ export const ALREADY_RUNNING = 'A review loop is already running in this session
 export const MAX_PROGRESS_EVENTS = 64;
 const MAX_PROGRESS_TEXT = 8192;
 const MAX_DENIALS = 32;
+// Dispute-judging rounds are free, so the visible total grows with them.
+const reviewBudget = (state) => state.maxReviews + (state.disputeRounds ?? 0);
 const DIAGNOSTIC_TOOLS = new Set(['review_loop_source', 'review_loop_submit_review', 'review_loop_submit_fix', 'patch', 'edit', 'write']);
 const DIAGNOSTIC_ERROR_TYPES = new Set(['validation', 'invalid_input', 'tool.execution', 'permission.rejected', 'unknown']);
 // Locations load separate plugin instances; session guards must follow a moved session.
@@ -81,7 +83,7 @@ export class Engine {
     const id = randomUUID();
     const lease = await this.store.acquire(scope.root, id);
     if (this.disposed) { await lease.release(); throw new Error('Review-loop plugin unloaded during startup.'); }
-    const run = new Run({ id });
+    const run = new Run({ id, maxReviews: options.maxReviews });
     const active = { owner: this, run, scope, lease, fixerID: sessionID, fixerModel: fixer.model, fixerAgent: fixer.agent, reviewerModel, checks: options.checks, checkPolicy, goal: options.goal, pullRequest: options.pullRequest, approvedSnapshot: options.approvedSnapshot, abort: new AbortController() };
     this.active.set(id, active);
     run.state.worktree = scope.root;
@@ -133,7 +135,7 @@ export class Engine {
         for (const command of active.checks) {
           this.ensureRunning(active);
           if (await checkPolicyFingerprint(scope) !== active.checkPolicy) throw new Error('Approved check definitions changed; restart and reapprove before execution.');
-          await this.progress(active, `Round ${run.state.round + 1}/${run.state.maxReviews} · Checking: ${command}`);
+          await this.progress(active, `Round ${run.state.round + 1}/${reviewBudget(run.state)} · Checking: ${command}`);
           try { checks.push(await runCheck(command, scope.cwd, { signal: abort.signal, path: await checkPath() })); }
           catch (error) {
             if (error.cleanupUnconfirmed) run.state.pendingProcessPID = error.pid;
@@ -176,8 +178,15 @@ export class Engine {
           run.state.reviewerID = reviewer.id;
           await active.lease.save(run.state);
         }
-        await this.progress(active, `Round ${run.state.round}/${run.state.maxReviews} · Reviewing · session ${active.reviewerID}`);
-        const reviewMessages = await this.turn(active, active.reviewerID, reviewPrompt(active, checked), 'reviewer');
+        await this.progress(active, `Round ${run.state.round}/${reviewBudget(run.state)} · Reviewing · session ${active.reviewerID}`);
+        let reviewMessages = await this.turn(active, active.reviewerID, reviewPrompt(active, checked), 'reviewer');
+        const partial = run.state.submission;
+        // Omissions are deterministic; only a gap the reviewer could still close is worth one more turn.
+        if (partial && !partial.complete && !run.state.omissions.length) {
+          run.retryReview();
+          await this.progress(active, `Round ${run.state.round}/${reviewBudget(run.state)} · Reviewer reported gaps; retrying once: ${partial.limitations.join(' ')}`);
+          reviewMessages = await this.turn(active, active.reviewerID, reviewRetryPrompt(active, partial.limitations), 'reviewer');
+        }
         // Shown, never interpreted: the reviewer's own words can contradict its structured submission.
         run.state.reviewerNote = reviewMessages.filter((message) => message.type === 'assistant').flatMap((message) => message.content ?? []).filter((part) => part.type === 'text').map((part) => part.text).join('\n').trim().slice(0, REVIEWER_NOTE_LIMIT) || undefined;
         const reviewed = await scope.snapshot();
@@ -186,7 +195,7 @@ export class Engine {
         run.reviewCompleted(reviewed.fingerprint);
         await active.lease.save(run.state);
         if (run.state.phase === 'fixing') {
-          await this.progress(active, `Round ${run.state.round}/${run.state.maxReviews} · Fixing · findings: ${JSON.stringify(run.state.issues)}`);
+          await this.progress(active, `Round ${run.state.round}/${reviewBudget(run.state)} · Fixing · findings: ${JSON.stringify(run.state.issues)}`);
           await this.turn(active, active.fixerID, fixPrompt(active), 'fixer');
           run.fixCompleted();
           await active.lease.save(run.state);
@@ -217,10 +226,10 @@ export class Engine {
     const stopped = state.phase === 'stopped'
       ? `\nStopped during ${state.stoppedPhase ?? 'an unknown phase'}; findings and partial edits are not verified. Inspect status and changes before starting a new review. Unconfirmed cleanup retains the worktree claim.`
       : '';
-    const incomplete = state.phase === 'incomplete' ? '\nPartial findings are unverified. No automatic fixes or PASS; inspect omissions and complete coverage manually.' : '';
+    const incomplete = state.phase === 'incomplete' ? '\nCoverage was incomplete, so there is no PASS. Findings in inspected files may have been fixed; inspect omissions and complete coverage manually.' : '';
     const omissions = describeOmissions(state.omissions);
     const checks = state.checks?.at(-1)?.results ?? [];
-    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${state.maxReviews} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}${incomplete}${omissions}\nChecks: ${checks.map((check) => `${check.command}: ${check.error ?? `exit ${check.exitCode}`}`).join('; ') || 'none completed'}\nReviewer: ${modelLabel(active.reviewerModel)}${state.reviewerID ? `\nReviewer session: ${state.reviewerID}` : ''}${state.reviewerNote ? `\nReviewer note (model text, unverified): ${state.reviewerNote}` : ''}${assumptions.length ? `\nReviewer assumptions (unverified): ${assumptions.join(' ')}` : ''}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
+    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${reviewBudget(state)} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}${incomplete}${omissions}\nChecks: ${checks.map((check) => `${check.command}: ${check.error ?? `exit ${check.exitCode}`}`).join('; ') || 'none completed'}\nReviewer: ${modelLabel(active.reviewerModel)}${state.reviewerID ? `\nReviewer session: ${state.reviewerID}` : ''}${state.reviewerNote ? `\nReviewer note (model text, unverified): ${state.reviewerNote}` : ''}${assumptions.length ? `\nReviewer assumptions (unverified): ${assumptions.join(' ')}` : ''}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
   }
 
   ensureRunning(active) {
@@ -298,11 +307,12 @@ export class Engine {
       }
       if (input.complete && input.limitations.length) throw new ReviewInputError('A review that lists coverage limitations is not complete. Resolve them by inspecting more source, or submit complete=false.');
       active.run.state.omissions = [...active.scope.omissions].map(([path, reason]) => ({ path, reason }));
-      if (input.complete && active.run.state.omissions.length) throw new ReviewInputError('Complete review refused: selected files are unavailable. Review available content and submit complete=false; omissions are retained by the controller.');
-      if (input.complete && active.uncovered.size) {
-        const shown = [...active.uncovered].slice(0, 10).join(', ');
+      const omitted = new Set(active.run.state.omissions.map((entry) => entry.path));
+      const missed = [...active.uncovered].filter((path) => !omitted.has(path));
+      if (input.complete && missed.length) {
+        const shown = missed.slice(0, 10).join(', ');
         const how = active.oversized ? 'Read each diff to its end with review_loop_source operation "diff"' : 'Open each with review_loop_source operation "read" (or page its "diff" to the end)';
-        throw new ReviewInputError(`Complete review refused: ${active.uncovered.size} changed file(s) were not inspected (${shown}${active.uncovered.size > 10 ? ', …' : ''}). ${how}, or submit complete=false.`);
+        throw new ReviewInputError(`Complete review refused: ${missed.length} changed file(s) were not inspected (${shown}${missed.length > 10 ? ', …' : ''}). ${how}, or submit complete=false.`);
       }
     } catch (error) {
       if (error instanceof ReviewInputError && typeof toolCallID === 'string') active.invalidReviewCalls?.add(toolCallID);

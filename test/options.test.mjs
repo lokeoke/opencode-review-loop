@@ -71,3 +71,10 @@ test('reviewer variant is an explicit option', () => {
   assert.equal(parseCommand('start --reviewer-variant medium').reviewerVariant, 'medium');
   assert.throws(() => parseCommand('start --reviewer-variant'), /Missing or invalid value/);
 });
+
+test('--max-reviews is an integer between 1 and the ceiling and defaults to the controller limit', () => {
+  assert.equal(parseCommand('start').maxReviews, undefined);
+  assert.equal(parseCommand('start --max-reviews 6 --check "npm test"').maxReviews, 6);
+  assert.equal(parseCommand('--max-reviews 10').maxReviews, 10);
+  for (const bad of ['0', '11', '2.5', 'many', '-1']) assert.throws(() => parseCommand(`start --max-reviews ${bad}`), /max-reviews/);
+});

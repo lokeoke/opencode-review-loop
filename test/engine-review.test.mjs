@@ -79,15 +79,16 @@ test('regressions may be reported in unchanged source with explicit changed-code
       return;
     }
     const issue = { id: 'helper', severity: 'major', file: 'helper.js', line: 1, problem: 'Null dereference.', failure_scenario: 'The changed caller passes undefined.', suggested_fix: 'Validate the caller input.' };
-    await assert.rejects(f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [issue], resolutions: [] }), /introduced_by/);
+    if (round === 1) await assert.rejects(f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [issue], resolutions: [] }), /introduced_by/);
     issue.introduced_by = { file: 'app.js', line: 1, explanation: 'The modified caller introduces an undefined argument.' };
-    await f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [issue], resolutions: [] });
+    await f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [issue], resolutions: round === 1 ? [] : [{ id: 'helper', status: 'open', evidence: 'The caller still passes undefined.' }] });
   });
   const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] });
   await task.done;
   const state = await f.engine.status('fixer');
   assert.equal(state.issues[0].file, 'helper.js');
   assert.match(state.reason, /disputed/);
+  assert.match(f.reports.at(-1), /2\/5 reviews/);
 });
 
 const guardDenial = { type: 'tool', name: 'patch', state: { status: 'error', error: { type: 'permission.rejected', message: 'Denied by review-loop policy: edit: "/x": the worktree root is a directory, not an editable file' } } };
@@ -214,4 +215,24 @@ test('progress history is bounded and each delivery channel receives the termina
   await f.engine.stop('fixer'); release(); await task.done;
   assert.equal(notifications.filter((text) => text.startsWith('Review loop STOPPED')).length, 1);
   assert.equal(f.reports.filter((text) => text.startsWith('Review loop STOPPED')).length, 1, 'transcript copy is delivered once, never skipped');
+});
+
+test('--max-reviews bounds the run: a persistent blocker stops at the configured review count', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async (input) => {
+    const { id: runId, round } = f.engine.activeFor('fixer').run.state;
+    if (input.sessionID === 'fixer') {
+      await writeFile(join(f.directory, 'app.js'), `export const value = ${round + 2};\n`);
+      await f.engine.submitFix('fixer', { runId, round, summary: 'Tried.', disputed: [] });
+    } else await f.engine.submitReview('reviewer', {
+      runId, round, complete: true, limitations: [], assumptions: [],
+      issues: [{ id: `value-${round}`, severity: 'major', file: 'app.js', line: 1, problem: 'Incorrect value.', failure_scenario: 'Callers require three.', suggested_fix: 'Return three.' }],
+      resolutions: round === 1 ? [] : [{ id: `value-${round - 1}`, status: 'fixed', evidence: 'Replaced.' }],
+    });
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'], maxReviews: 2 })).done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.maxReviews, 2);
+  assert.equal(state.round, 2);
+  assert.match(state.reason, /Review limit reached/);
 });

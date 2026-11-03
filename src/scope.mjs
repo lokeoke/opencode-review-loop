@@ -24,5 +24,5 @@ export function summarizeOmissions(omissions = []) {
 export function describeOmissions(omissions = []) {
   if (!omissions.length) return '';
   const summary = summarizeOmissions(omissions);
-  return `\nOmissions (${summary.total} total; first ${MAX_SHOWN_OMISSIONS} shown):\n${summary.paths.map(({ path, reason }) => `${JSON.stringify(path)}: ${reason}`).join('\n')}\nReview is incomplete while selected content is unavailable; no automatic fixes or PASS. Full omission list is retained in status.`;
+  return `\nOmissions (${summary.total} total; first ${MAX_SHOWN_OMISSIONS} shown):\n${summary.paths.map(({ path, reason }) => `${JSON.stringify(path)}: ${reason}`).join('\n')}\nReview is incomplete while selected content is unavailable; there is no PASS, but findings in inspected files are still fixed. Full omission list is retained in status.`;
 }

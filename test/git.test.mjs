@@ -433,14 +433,28 @@ test('a cached diff is dropped by invalidate so edits made after a read are visi
 
 test('an oversized untracked file is fingerprinted but omitted from review content', async (t) => {
   const root = await oversizedFixture(t, 0);
-  await writeFile(join(root, 'huge.js'), 'x'.repeat(512 * 1024 + 1));
+  await writeFile(join(root, 'huge.js'), 'x'.repeat(4 * 1024 * 1024 + 1));
   const scope = await GitScope.open(root, 'HEAD');
   const before = await scope.snapshot();
   assert.deepEqual(before.omissions.map((entry) => entry.path), ['huge.js']);
-  assert.match(before.omissions[0].reason, /512 KiB/);
+  assert.match(before.omissions[0].reason, /4 MiB/);
   assert.ok(!before.diff.includes('xxxxx'));
-  await writeFile(join(root, 'huge.js'), 'y'.repeat(512 * 1024 + 1));
+  await writeFile(join(root, 'huge.js'), 'y'.repeat(4 * 1024 * 1024 + 1));
   assert.notEqual((await scope.snapshot()).fingerprint, before.fingerprint);
+});
+
+test('a new text file between 512 KiB and 4 MiB is reviewable by paging its diff', async (t) => {
+  const root = await oversizedFixture(t, 0);
+  const rows = Array.from({ length: 60_000 }, (_, i) => `row${i},value${i}`).join('\n');
+  assert.ok(rows.length > 512 * 1024 && rows.length < 4 * 1024 * 1024);
+  await writeFile(join(root, 'data.csv'), rows);
+  const scope = await GitScope.open(root, 'HEAD');
+  const snapshot = await scope.snapshot();
+  assert.deepEqual(snapshot.omissions, []);
+  assert.equal(snapshot.oversized, true);
+  const page = await scope.fileDiff({ path: 'data.csv' });
+  assert.match(page.text, /row0,value0/);
+  assert.equal(page.complete, false);
 });
 
 test('untracked files that became binary or oversized after the snapshot are not served by the diff reader', async (t) => {
@@ -450,7 +464,7 @@ test('untracked files that became binary or oversized after the snapshot are not
   await scope.snapshot();
   await writeFile(join(root, 'late.js'), 'a\0b');
   assert.match((await scope.fileDiff({ path: 'late.js' })).text, /^\[Unavailable: Binary/);
-  await writeFile(join(root, 'late.js'), 'x'.repeat(512 * 1024 + 1));
+  await writeFile(join(root, 'late.js'), 'x'.repeat(4 * 1024 * 1024 + 1));
   await scope.snapshot();
   assert.match((await scope.fileDiff({ path: 'late.js' })).text, /size limit/);
 });

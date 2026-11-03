@@ -11,12 +11,12 @@ const MAX_GIT_OUTPUT = 8 * 1024 * 1024;
 const MAX_REVIEW_BYTES = 192 * 1024;
 const MAX_SOURCE_BYTES = 64 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 15_000;
-const MAX_SOURCE_FILE_BYTES = 512 * 1024;
+const MAX_SOURCE_FILE_BYTES = 4 * 1024 * 1024;
 const MAX_SOURCE_RESPONSE_BYTES = 32 * 1024;
 const MAX_REVIEW_FILES = 300;
 const MAX_DIFF_LINE_CHARS = 4000;
 const GIT_SYMLINK_MODE = '120000';
-const SOURCE_SIZE_REASON = `Source exceeds the ${MAX_SOURCE_FILE_BYTES / 1024} KiB per-file size limit; inspect its diff instead.`;
+const SOURCE_SIZE_REASON = `Source exceeds the ${MAX_SOURCE_FILE_BYTES / (1024 * 1024)} MiB per-file size limit; inspect its diff instead.`;
 export const END_OF_DIFF = '(end of diff)';
 export const SOURCE_UNAVAILABLE = '[Unavailable: ';
 const unavailable = (reason) => `${SOURCE_UNAVAILABLE}${reason}]`;
@@ -71,7 +71,7 @@ function renderDiff(bytes) {
 async function readNewFile(path) {
   const handle = await open(path, 'r');
   try {
-    const buffer = Buffer.alloc(MAX_SOURCE_FILE_BYTES + 1);
+    const buffer = Buffer.alloc(Math.min((await handle.stat()).size, MAX_SOURCE_FILE_BYTES) + 1);
     let total = 0;
     while (total < buffer.length) {
       const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
