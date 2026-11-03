@@ -129,7 +129,8 @@ test('a disputed minor finding is recorded without stopping; a disputed blocker 
   blockerRun.reviewCompleted('before');
   blockerRun.submitFix({ summary: 'Disagree.', disputed: ['auth-check'] });
   blockerRun.fixCompleted();
-  assert.equal(blockerRun.state.phase, 'stopped');
+  assert.equal(blockerRun.state.phase, 'checking');
+  assert.deepEqual(blockerRun.state.pendingDisputes.map((entry) => entry.id), ['auth-check']);
 });
 
 test('a minor-only fix pass that leaves the code unchanged passes instead of stopping as oscillation', () => {
@@ -174,4 +175,126 @@ test('a minor finding that already had its fix attempt is not sent to the fixer 
   next.reviewCompleted('two');
   assert.equal(next.state.phase, 'fixing');
   assert.deepEqual(next.fixTargets().map((issue) => issue.id), ['auth-check-2']);
+});
+
+const omission = { path: 'big.csv', reason: 'Source exceeds the per-file size limit; inspect its diff instead.' };
+
+test('omissions do not block fixing blocking findings from the available files', () => {
+  const run = new Run({ id: 'run-omission-fix' });
+  run.state.omissions = [omission];
+  run.checked('before');
+  run.submitReview(review([finding]));
+  run.reviewCompleted('before');
+  assert.equal(run.state.phase, 'fixing');
+});
+
+test('omissions forbid PASS: once no blocker remains the run ends incomplete', () => {
+  const run = new Run({ id: 'run-omission-clean' });
+  run.state.omissions = [omission];
+  run.checked('before');
+  run.submitReview(review([finding]));
+  run.reviewCompleted('before');
+  run.submitFix({ summary: 'Fixed.', disputed: [] });
+  run.fixCompleted();
+  run.checked('after');
+  run.submitReview(review([], [{ id: finding.id, status: 'fixed', evidence: 'app.js now checks the owner.' }]));
+  run.reviewCompleted('after');
+  assert.equal(run.state.phase, 'incomplete');
+  assert.match(run.state.reason, /1 selected file\(s\) unavailable/);
+  assert.deepEqual(run.state.history.map((entry) => entry.round), [1, 2]);
+});
+
+test('a clean review over omissions is incomplete, not passed', () => {
+  const run = new Run({ id: 'run-omission-only' });
+  run.state.omissions = [omission];
+  run.checked('before');
+  run.submitReview(review([]));
+  run.reviewCompleted('before');
+  assert.equal(run.state.phase, 'incomplete');
+});
+
+const dispute = (run, id = 'auth-check') => { run.submitFix({ summary: 'The guard sits in the caller.', disputed: [id] }); run.fixCompleted(); };
+const withdrawn = [{ id: 'auth-check', status: 'withdrawn', evidence: 'The caller already enforces ownership.' }];
+
+test('a disputed blocker is judged by the reviewer on unchanged code, and a withdrawn finding passes', () => {
+  const run = new Run({ id: 'run-dispute-withdrawn' });
+  run.checked('code');
+  run.submitReview(review([finding]));
+  run.reviewCompleted('code');
+  dispute(run);
+  assert.equal(run.state.phase, 'checking');
+  assert.deepEqual(run.state.pendingDisputes, [{ id: 'auth-check', rationale: 'The guard sits in the caller.' }]);
+  run.checked('code');
+  assert.equal(run.state.phase, 'reviewing');
+  assert.equal(run.state.round, 2);
+  run.submitReview(review([], withdrawn));
+  run.reviewCompleted('code');
+  assert.equal(run.state.phase, 'passed');
+  assert.deepEqual(run.state.pendingDisputes, []);
+});
+
+test('a rejected dispute gets one more fix pass; disputing the same finding again needs a human', () => {
+  const run = new Run({ id: 'run-dispute-kept' });
+  run.checked('code');
+  run.submitReview(review([finding]));
+  run.reviewCompleted('code');
+  dispute(run);
+  run.checked('code');
+  run.submitReview(review([finding], [{ id: 'auth-check', status: 'open', evidence: 'The caller does not check ownership.' }]));
+  run.reviewCompleted('code');
+  assert.equal(run.state.phase, 'fixing');
+  dispute(run);
+  assert.equal(run.state.phase, 'stopped');
+  assert.match(run.state.reason, /disputed/);
+});
+
+test('withdrawing a finding that is still reported is inconsistent', () => {
+  const run = new Run({ id: 'run-dispute-inconsistent' });
+  run.checked('code');
+  run.submitReview(review([finding]));
+  run.reviewCompleted('code');
+  dispute(run);
+  run.checked('code');
+  run.submitReview(review([finding], withdrawn));
+  run.reviewCompleted('code');
+  assert.equal(run.state.phase, 'stopped');
+  assert.match(run.state.reason, /Inconsistent/);
+});
+
+test('a finding can only be withdrawn while its dispute is pending', () => {
+  const run = new Run({ id: 'run-withdraw-stale' });
+  run.checked('code');
+  run.submitReview(review([finding]));
+  run.reviewCompleted('code');
+  dispute(run);
+  run.checked('code');
+  run.submitReview(review([finding], [{ id: 'auth-check', status: 'open', evidence: 'The caller does not check ownership.' }]));
+  run.reviewCompleted('code');
+  run.submitFix({ summary: 'Added the check.', disputed: [] });
+  run.fixCompleted();
+  run.checked('fixed');
+  run.submitReview(review([], withdrawn));
+  run.reviewCompleted('fixed');
+  assert.equal(run.state.phase, 'stopped');
+  assert.match(run.state.reason, /Inconsistent/);
+});
+
+test('a dispute-judging review does not consume the review budget', () => {
+  const run = new Run({ id: 'run-dispute-budget', maxReviews: 2 });
+  run.checked('code');
+  run.submitReview(review([finding]));
+  run.reviewCompleted('code');
+  dispute(run);
+  run.checked('code');
+  run.submitReview(review([finding], [{ id: 'auth-check', status: 'open', evidence: 'The caller does not check ownership.' }]));
+  run.reviewCompleted('code');
+  assert.equal(run.state.phase, 'fixing');
+  run.submitFix({ summary: 'Added the check.', disputed: [] });
+  run.fixCompleted();
+  run.checked('fixed');
+  run.submitReview(review([{ ...finding, id: 'other-check' }], [{ id: 'auth-check', status: 'fixed', evidence: 'The owner is now checked.' }]));
+  run.reviewCompleted('fixed');
+  assert.equal(run.state.phase, 'stopped');
+  assert.match(run.state.reason, /limit/i);
+  assert.equal(run.state.round, 3);
 });

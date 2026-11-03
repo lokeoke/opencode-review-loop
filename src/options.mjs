@@ -1,4 +1,5 @@
 import { parsePullRequestRef } from './pr.mjs';
+import { MAX_REVIEWS_CEILING } from './controller.mjs';
 
 export const COPILOT = 'github-copilot';
 // Strongest first within each lineage; selection takes the first one outside the fixer's lineage.
@@ -47,13 +48,17 @@ export function parseCommand(input = '') {
     }
     if (key === '--allow-same-family') { result.allowSameFamily = true; continue; }
     if (key === '--include-uncommitted') { result.includeUncommitted = true; continue; }
-    if (!['--base', '--goal', '--check', '--reviewer', '--reviewer-variant', '--confirm'].includes(key)) throw new Error(`Unknown option: ${key}`);
+    if (!['--base', '--goal', '--check', '--reviewer', '--reviewer-variant', '--max-reviews', '--confirm'].includes(key)) throw new Error(`Unknown option: ${key}`);
     if (key !== '--check' && seen.has(key)) throw new Error(`Duplicate option: ${key}`);
     seen.add(key);
     const value = args[++i];
     if (!value?.trim() || value.startsWith('--') || value.includes('\0') || value.length > 8000) throw new Error(`Missing or invalid value for ${key}.`);
     if (key === '--check') result.checks.push(value);
     else if (key === '--reviewer-variant') result.reviewerVariant = value;
+    else if (key === '--max-reviews') {
+      if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > MAX_REVIEWS_CEILING) throw new Error(`--max-reviews must be an integer from 1 to ${MAX_REVIEWS_CEILING}.`);
+      result.maxReviews = Number(value);
+    }
     else result[key.slice(2)] = value;
   }
   if (result.pr && seen.has('--base')) throw new Error('A pull request defines its own base; remove --base.');

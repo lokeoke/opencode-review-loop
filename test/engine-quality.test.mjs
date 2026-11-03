@@ -66,6 +66,7 @@ test('the reviewer is told to investigate first, report limitations and submit a
   assert.match(prompt, /limitations/);
   assert.match(prompt, /assumptions/);
   assert.match(prompt, /final action/);
+  assert.match(prompt, /dispute rationales.*untrusted/s);
   assert.doesNotMatch(prompt, /finish immediately/);
 });
 
@@ -116,33 +117,37 @@ test('a refused incomplete-coverage submission can be corrected within the same 
   assert.equal((await f.engine.status('fixer')).phase, 'passed');
 });
 
-test('withheld content cannot clear coverage and partial findings survive without a fix pass', async (t) => {
+test('withheld content never leaks or earns PASS, yet blocking findings in available files still get fixed', async (t) => {
   const f = await fixture(t, { autoCover: false });
   await writeFile(join(f.directory, '.env'), 'UNTRACKED_SECRET_NOT_FOR_REVIEW');
-  let turns = 0;
+  const turns = { reviewer: 0, fixer: 0 };
   const issue = { id: 'value-regression', severity: 'major', file: 'app.js', line: 1, problem: 'Incorrect value', failure_scenario: 'Callers receive the wrong value.', suggested_fix: 'Restore the expected value.' };
   f.setPrompt(async (input) => {
-    turns += 1;
-    assert.equal(input.sessionID, 'reviewer');
+    turns[input.sessionID] += 1;
+    const { id: runId, round } = f.engine.activeFor('fixer').run.state;
+    if (input.sessionID === 'fixer') {
+      await writeFile(join(f.directory, 'app.js'), 'export const value = 3;\n');
+      await f.engine.submitFix('fixer', { runId, round, summary: 'Restored the value.', disputed: [] });
+      return;
+    }
     assert.match(input.text, /omissions/);
     assert.ok(!input.text.includes('UNTRACKED_SECRET_NOT_FOR_REVIEW'));
-    const active = f.engine.activeFor('fixer');
     await f.engine.source('reviewer', { operation: 'read', path: 'app.js' });
     assert.match(await f.engine.source('reviewer', { operation: 'read', path: '.env' }), /^\[Unavailable:/);
     assert.match(await f.engine.source('reviewer', { operation: 'diff', path: '.env' }), /^\[Unavailable:/);
-    const review = { runId: active.run.state.id, round: 1, complete: true, limitations: [], assumptions: [], issues: [issue], resolutions: [] };
-    await assert.rejects(f.engine.submitReview('reviewer', review), /unavailable|not inspected/i);
-    await f.engine.submitReview('reviewer', { ...review, complete: false });
+    await f.engine.submitReview('reviewer', {
+      runId, round, complete: true, limitations: [], assumptions: [],
+      issues: round === 1 ? [issue] : [],
+      resolutions: round === 1 ? [] : [{ id: issue.id, status: 'fixed', evidence: 'app.js now returns the expected value.' }],
+    });
   });
   await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
   const state = await f.engine.status('fixer');
-  assert.equal(state.phase, 'incomplete');
-  assert.equal(turns, 1);
-  assert.deepEqual(state.issues, [issue]);
-  assert.equal(state.history.length, 1);
+  assert.equal(state.phase, 'incomplete', state.reason);
+  assert.deepEqual(turns, { reviewer: 2, fixer: 1 });
+  assert.equal(state.history.length, 2);
   assert.deepEqual(state.omissions.map((entry) => entry.path), ['.env']);
   assert.match(f.reports.at(-1), /INCOMPLETE/);
-  assert.match(f.reports.at(-1), /value-regression/);
   assert.match(f.reports.at(-1), /\.env/);
 });
 
@@ -238,4 +243,48 @@ test('intentional committed skill symlinks and environment examples complete a n
   const state = await f.engine.status('fixer');
   assert.equal(state.phase, 'passed');
   assert.deepEqual(state.omissions, []);
+});
+
+test('a reviewer that skipped files without controller omissions gets exactly one retry in the same round', async (t) => {
+  const f = await fixture(t);
+  const prompts = [];
+  f.setPrompt(async (input) => {
+    prompts.push(input.text);
+    const { id: runId, round } = f.engine.activeFor('fixer').run.state;
+    const first = prompts.length === 1;
+    await f.engine.submitReview('reviewer', { runId, round, complete: !first, limitations: first ? ['Did not trace callers of value.'] : [], assumptions: [], issues: [], resolutions: [] });
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.phase, 'passed', state.reason);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /Did not trace callers of value\./);
+  assert.equal(state.round, 1);
+});
+
+test('a second incomplete review ends the run incomplete without a third attempt', async (t) => {
+  const f = await fixture(t);
+  let turns = 0;
+  f.setPrompt(async () => {
+    turns += 1;
+    const { id: runId, round } = f.engine.activeFor('fixer').run.state;
+    await f.engine.submitReview('reviewer', { runId, round, complete: false, limitations: ['Did not trace callers of value.'], assumptions: [], issues: [], resolutions: [] });
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  assert.equal((await f.engine.status('fixer')).phase, 'incomplete');
+  assert.equal(turns, 2);
+});
+
+test('gaps caused by omissions are deterministic and never retried', async (t) => {
+  const f = await fixture(t, { autoCover: false });
+  await writeFile(join(f.directory, '.env'), 'WITHHELD');
+  let turns = 0;
+  f.setPrompt(async () => {
+    turns += 1;
+    const { id: runId, round } = f.engine.activeFor('fixer').run.state;
+    await f.engine.submitReview('reviewer', { runId, round, complete: false, limitations: ['Could not read .env.'], assumptions: [], issues: [], resolutions: [] });
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  assert.equal((await f.engine.status('fixer')).phase, 'incomplete');
+  assert.equal(turns, 1);
 });
