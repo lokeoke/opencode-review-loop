@@ -6,6 +6,7 @@ import { RunStore } from './storage.mjs';
 import { selectReviewer } from './options.mjs';
 import { checkPath, runCheck } from './checks.mjs';
 import { fixPrompt, reviewPrompt, reviewRetryPrompt } from './prompts.mjs';
+import { formatFindings } from './report.mjs';
 import { checkPolicyFingerprint } from './check-policy.mjs';
 import { ReviewInputError, validateReview } from './contracts.mjs';
 import { DENIAL_PREFIX } from './security.mjs';
@@ -195,7 +196,7 @@ export class Engine {
         run.reviewCompleted(reviewed.fingerprint);
         await active.lease.save(run.state);
         if (run.state.phase === 'fixing') {
-          await this.progress(active, `Round ${run.state.round}/${reviewBudget(run.state)} · Fixing · findings: ${JSON.stringify(run.state.issues)}`);
+          await this.progress(active, `Round ${run.state.round}/${reviewBudget(run.state)} · Fixing · findings:\n${formatFindings(run.state.issues)}`);
           await this.turn(active, active.fixerID, fixPrompt(active), 'fixer');
           run.fixCompleted();
           await active.lease.save(run.state);
@@ -229,7 +230,7 @@ export class Engine {
     const incomplete = state.phase === 'incomplete' ? '\nCoverage was incomplete, so there is no PASS. Findings in inspected files may have been fixed; inspect omissions and complete coverage manually.' : '';
     const omissions = describeOmissions(state.omissions);
     const checks = state.checks?.at(-1)?.results ?? [];
-    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${reviewBudget(state)} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}${incomplete}${omissions}\nChecks: ${checks.map((check) => `${check.command}: ${check.error ?? `exit ${check.exitCode}`}`).join('; ') || 'none completed'}\nReviewer: ${modelLabel(active.reviewerModel)}${state.reviewerID ? `\nReviewer session: ${state.reviewerID}` : ''}${state.reviewerNote ? `\nReviewer note (model text, unverified): ${state.reviewerNote}` : ''}${assumptions.length ? `\nReviewer assumptions (unverified): ${assumptions.join(' ')}` : ''}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
+    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${reviewBudget(state)} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}${incomplete}${omissions}\nChecks: ${checks.map((check) => `${check.command}: ${check.error ?? `exit ${check.exitCode}`}`).join('; ') || 'none completed'}\nReviewer: ${modelLabel(active.reviewerModel)}${state.reviewerID ? `\nReviewer session: ${state.reviewerID}` : ''}${state.reviewerNote ? `\nReviewer note (model text, unverified): ${state.reviewerNote}` : ''}${assumptions.length ? `\nReviewer assumptions (unverified): ${assumptions.join(' ')}` : ''}\nFindings: ${formatFindings(state.issues)}${state.phase === 'stopped' && !state.issues.length && state.submission?.issues?.length ? `\nUnverified findings from the interrupted review:\n${formatFindings(state.submission.issues)}` : ''}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
   }
 
   ensureRunning(active) {
@@ -268,7 +269,9 @@ export class Engine {
         const submission = role === 'reviewer' ? 'review_loop_submit_review' : 'review_loop_submit_fix';
         // A guard denial executed nothing; the fixer corrected course if a later same-tool call completed.
         const guardDenial = error?.type === 'permission.rejected' && (error.message ?? '').startsWith(DENIAL_PREFIX);
-        return (invalidInput || unknownTool || guardDenial) && tools.some((later) => later.name === (unknownTool ? submission : part.name) && later.state?.status === 'completed' && tools.indexOf(later) > tools.indexOf(part));
+        // A failed read-only source call changed nothing; it cannot invalidate a review submitted successfully after it.
+        const readOnlyProbe = role === 'reviewer' && part.name === 'review_loop_source' && tools.some((later) => later.name === 'review_loop_submit_review' && later.state?.status === 'completed' && tools.indexOf(later) > tools.indexOf(part));
+        return readOnlyProbe || ((invalidInput || unknownTool || guardDenial) && tools.some((later) => later.name === (unknownTool ? submission : part.name) && later.state?.status === 'completed' && tools.indexOf(later) > tools.indexOf(part)));
       };
       const failedTool = tools.find((part) => part.state?.status === 'error' && !recovered(part));
       if (failedTool) {

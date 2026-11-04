@@ -191,9 +191,12 @@ test('a bare start while a loop is running refuses immediately instead of showin
   await command({ sessionID: 'fixer', text: 'stop' });
   release();
   let stopped = false;
-  for (let i = 0; i < 100 && !stopped; i++) { stopped = /"phase": "stopped"/.test((await command({ sessionID: 'fixer', text: 'status' })).text); if (!stopped) await new Promise((resolve) => setImmediate(resolve)); }
+  for (let i = 0; i < 100 && !stopped; i++) { stopped = /"phase": "stopped"/.test((await command({ sessionID: 'fixer', text: 'status --json' })).text); if (!stopped) await new Promise((resolve) => setImmediate(resolve)); }
   assert.ok(stopped, 'the run reaches the stopped phase');
-  const state = JSON.parse((await command({ sessionID: 'fixer', text: 'status' })).text);
+  const readable = (await command({ sessionID: 'fixer', text: 'status' })).text;
+  assert.match(readable, /^Review loop STOPPED/);
+  assert.doesNotMatch(readable, /"phase"/);
+  const state = JSON.parse((await command({ sessionID: 'fixer', text: 'status --json' })).text);
   assert.equal(state.stoppedPhase, 'checking');
   assert.match(state.progress.at(-1).text, /stopped during checking/i);
   assert.match(state.progress.at(-1).text, /inspect.*changes.*new review/i);

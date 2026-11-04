@@ -26,6 +26,7 @@ From your existing **Build** session:
 /review-loop            # same as /review-loop start: preview, then approve
 /review-loop 64         # a pull request URL or number; flags also imply start
 /review-loop status
+/review-loop status --json   # raw run state
 /review-loop stop
 ```
 
