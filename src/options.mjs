@@ -32,6 +32,7 @@ export function parseCommand(input = '') {
   const action = explicit ? tokens[0] : 'start';
   const args = explicit ? tokens.slice(1) : tokens;
   if (action !== 'start') {
+    if (action === 'status' && args.length === 1 && args[0] === '--json') return { action, json: true };
     if (args.length) throw new Error(`${action} takes no arguments.`);
     return { action };
   }

@@ -51,20 +51,29 @@ export class Run {
     this.state.submission = undefined;
   }
 
-  reviewCompleted(fingerprint) {
+  // A degraded review's turn failed after a valid submission: findings count, but it cannot clear blockers or earn PASS.
+  reviewCompleted(fingerprint, { degraded } = {}) {
     this.requirePhase('reviewing');
     if (fingerprint !== this.state.fingerprint) return this.stop('Code changed during review.');
     const result = this.state.submission;
     if (!result) return this.stop('Missing review.');
+    const entry = { round: this.state.round, fingerprint, review: result, ...(degraded && { degraded }) };
     if (!result.complete) {
       // Partial review cannot resolve earlier findings or schedule a fix, but its findings remain useful.
       this.state.issues = [...result.issues, ...this.state.issues.filter((old) => !result.issues.some((issue) => issue.id === old.id))];
-      this.state.history.push({ round: this.state.round, fingerprint, review: result });
+      this.state.history.push(entry);
       this.state.phase = 'incomplete';
       this.state.reason = `Incomplete review${result.limitations.length ? `: ${result.limitations.join(' ').slice(0, MAX_TEXT)}` : '.'}${this.omissionNote()}`;
       return;
     }
     const previous = this.state.issues.filter((issue) => BLOCKING.has(issue.severity));
+    if (degraded && previous.some((old) => !result.issues.some((issue) => issue.id === old.id))) {
+      this.state.issues = [...result.issues, ...this.state.issues.filter((old) => !result.issues.some((issue) => issue.id === old.id))];
+      this.state.history.push(entry);
+      this.state.phase = 'incomplete';
+      this.state.reason = `Degraded review (${degraded.cause}) cannot verify that earlier blocking findings were fixed.${this.omissionNote()}`;
+      return;
+    }
     const hadDispute = Boolean(this.state.pendingDisputes?.length);
     for (const issue of previous) {
       const resolution = result.resolutions.find((item) => item.id === issue.id);
@@ -79,7 +88,7 @@ export class Run {
     const seen = new Set(this.state.history.flatMap((entry) => entry.review.issues.map((issue) => issue.id)));
     const newMinor = result.issues.some((issue) => !BLOCKING.has(issue.severity) && !seen.has(issue.id));
     this.state.issues = result.issues;
-    this.state.history.push({ round: this.state.round, fingerprint, review: result });
+    this.state.history.push(entry);
     if (hadDispute) this.state.pendingDisputes = [];
     // A rejected dispute earns one more fix pass instead of the no-progress stop.
     if (repeated && !hadDispute) return this.stop('No progress: the same blocking findings remain.');
@@ -96,6 +105,12 @@ export class Run {
 
   // Omitted files are never verified, so they can end a run INCOMPLETE but never PASSED.
   finish() {
+    const cause = this.state.history.at(-1)?.degraded?.cause;
+    if (cause) {
+      this.state.phase = 'incomplete';
+      this.state.reason = `The last review was degraded (${cause}) and cannot establish a pass; no outstanding blocker/major findings were reported.${this.omissionNote()}`;
+      return;
+    }
     if (!this.state.omissions?.length) { this.state.phase = 'passed'; return; }
     this.state.phase = 'incomplete';
     this.state.reason = `No outstanding blocker/major findings in the inspected files.${this.omissionNote()}`;

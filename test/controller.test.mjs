@@ -298,3 +298,55 @@ test('a dispute-judging review does not consume the review budget', () => {
   assert.match(run.state.reason, /limit/i);
   assert.equal(run.state.round, 3);
 });
+
+const degraded = { degraded: { cause: 'timeout' } };
+
+test('a degraded review keeps its findings and still schedules a fix, recording the cause', () => {
+  const run = new Run({ id: 'run-degraded-fix' });
+  run.checked('before');
+  run.submitReview(review([finding]));
+  run.reviewCompleted('before', degraded);
+  assert.equal(run.state.phase, 'fixing');
+  assert.deepEqual(run.state.history.at(-1).degraded, { cause: 'timeout' });
+});
+
+test('a degraded clean review is incomplete, and only a later non-degraded review can pass', () => {
+  const run = new Run({ id: 'run-degraded-pass' });
+  run.checked('before');
+  run.submitReview(review([finding]));
+  run.reviewCompleted('before');
+  run.submitFix({ summary: 'Fixed.', disputed: [] });
+  run.fixCompleted();
+  run.checked('after');
+  run.submitReview(review([], [{ id: 'auth-check', status: 'fixed', evidence: 'The owner is now checked.' }]));
+  run.reviewCompleted('after', degraded);
+  assert.equal(run.state.phase, 'incomplete');
+  assert.match(run.state.reason, /degraded.*timeout/i);
+
+  const clean = new Run({ id: 'run-degraded-then-clean' });
+  clean.checked('one');
+  clean.submitReview(review([minor]));
+  clean.reviewCompleted('one', degraded);
+  assert.equal(clean.state.phase, 'fixing');
+  clean.submitFix({ summary: 'Handled empty input.', disputed: [] });
+  clean.fixCompleted();
+  clean.checked('two');
+  clean.submitReview(review([]));
+  clean.reviewCompleted('two');
+  assert.equal(clean.state.phase, 'passed');
+});
+
+test('a degraded review cannot clear earlier blockers', () => {
+  const run = new Run({ id: 'run-degraded-clear' });
+  run.checked('before');
+  run.submitReview(review([finding]));
+  run.reviewCompleted('before');
+  run.submitFix({ summary: 'Fixed.', disputed: [] });
+  run.fixCompleted();
+  run.checked('after');
+  run.submitReview(review([], [{ id: 'auth-check', status: 'fixed', evidence: 'The owner is now checked.' }]));
+  run.reviewCompleted('after', degraded);
+  assert.equal(run.state.phase, 'incomplete');
+  assert.match(run.state.reason, /cannot verify/i);
+  assert.deepEqual(run.state.issues.map((issue) => issue.id), ['auth-check']);
+});

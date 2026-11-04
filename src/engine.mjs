@@ -6,6 +6,7 @@ import { RunStore } from './storage.mjs';
 import { selectReviewer } from './options.mjs';
 import { checkPath, runCheck } from './checks.mjs';
 import { fixPrompt, reviewPrompt, reviewRetryPrompt } from './prompts.mjs';
+import { formatDegraded, formatFindings } from './report.mjs';
 import { checkPolicyFingerprint } from './check-policy.mjs';
 import { ReviewInputError, validateReview } from './contracts.mjs';
 import { DENIAL_PREFIX } from './security.mjs';
@@ -19,6 +20,9 @@ export const ALREADY_RUNNING = 'A review loop is already running in this session
 export const MAX_PROGRESS_EVENTS = 64;
 const MAX_PROGRESS_TEXT = 8192;
 const MAX_DENIALS = 32;
+class TurnFailure extends Error {
+  constructor(message, cause) { super(message); this.cause = cause; }
+}
 // Dispute-judging rounds are free, so the visible total grows with them.
 const reviewBudget = (state) => state.maxReviews + (state.disputeRounds ?? 0);
 const DIAGNOSTIC_TOOLS = new Set(['review_loop_source', 'review_loop_submit_review', 'review_loop_submit_fix', 'patch', 'edit', 'write']);
@@ -182,7 +186,7 @@ export class Engine {
         let reviewMessages = await this.turn(active, active.reviewerID, reviewPrompt(active, checked), 'reviewer');
         const partial = run.state.submission;
         // Omissions are deterministic; only a gap the reviewer could still close is worth one more turn.
-        if (partial && !partial.complete && !run.state.omissions.length) {
+        if (partial && !partial.complete && !run.state.omissions.length && !active.degradedCause) {
           run.retryReview();
           await this.progress(active, `Round ${run.state.round}/${reviewBudget(run.state)} · Reviewer reported gaps; retrying once: ${partial.limitations.join(' ')}`);
           reviewMessages = await this.turn(active, active.reviewerID, reviewRetryPrompt(active, partial.limitations), 'reviewer');
@@ -192,10 +196,12 @@ export class Engine {
         const reviewed = await scope.snapshot();
         await this.assertSession(active, active.fixerID);
         if (reviewed.index !== active.initial.index) throw new Error('Git index changed during review.');
-        run.reviewCompleted(reviewed.fingerprint);
+        const degraded = active.degradedCause && { cause: active.degradedCause };
+        if (degraded) await this.progress(active, `Round ${run.state.round}/${reviewBudget(run.state)} · Reviewer turn failed after submitting (${degraded.cause}); findings accepted as a degraded review.`);
+        run.reviewCompleted(reviewed.fingerprint, { degraded });
         await active.lease.save(run.state);
         if (run.state.phase === 'fixing') {
-          await this.progress(active, `Round ${run.state.round}/${reviewBudget(run.state)} · Fixing · findings: ${JSON.stringify(run.state.issues)}`);
+          await this.progress(active, `Round ${run.state.round}/${reviewBudget(run.state)} · Fixing · findings:\n${formatFindings(run.state.issues)}`);
           await this.turn(active, active.fixerID, fixPrompt(active), 'fixer');
           run.fixCompleted();
           await active.lease.save(run.state);
@@ -229,7 +235,7 @@ export class Engine {
     const incomplete = state.phase === 'incomplete' ? '\nCoverage was incomplete, so there is no PASS. Findings in inspected files may have been fixed; inspect omissions and complete coverage manually.' : '';
     const omissions = describeOmissions(state.omissions);
     const checks = state.checks?.at(-1)?.results ?? [];
-    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${reviewBudget(state)} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}${incomplete}${omissions}\nChecks: ${checks.map((check) => `${check.command}: ${check.error ?? `exit ${check.exitCode}`}`).join('; ') || 'none completed'}\nReviewer: ${modelLabel(active.reviewerModel)}${state.reviewerID ? `\nReviewer session: ${state.reviewerID}` : ''}${state.reviewerNote ? `\nReviewer note (model text, unverified): ${state.reviewerNote}` : ''}${assumptions.length ? `\nReviewer assumptions (unverified): ${assumptions.join(' ')}` : ''}\nFindings: ${JSON.stringify(state.issues)}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
+    return `Review loop ${state.phase.toUpperCase()} (${state.id}), ${state.round}/${reviewBudget(state)} reviews.\n${state.reason || 'No outstanding blocker/major findings; required checks passed on the reviewed code.'}${stopped}${incomplete}${omissions}${formatDegraded(state.history).map((line) => `\n${line}`).join('')}\nChecks: ${checks.map((check) => `${check.command}: ${check.error ?? `exit ${check.exitCode}`}`).join('; ') || 'none completed'}\nReviewer: ${modelLabel(active.reviewerModel)}${state.reviewerID ? `\nReviewer session: ${state.reviewerID}` : ''}${state.reviewerNote ? `\nReviewer note (model text, unverified): ${state.reviewerNote}` : ''}${assumptions.length ? `\nReviewer assumptions (unverified): ${assumptions.join(' ')}` : ''}\nFindings: ${formatFindings(state.issues)}${state.phase === 'stopped' && !state.issues.length && state.submission?.issues?.length ? `\nUnverified findings from the interrupted review:\n${formatFindings(state.submission.issues)}` : ''}${active.persistenceError ? `\nState error: ${active.persistenceError}` : ''}`;
   }
 
   ensureRunning(active) {
@@ -250,6 +256,7 @@ export class Engine {
     const signal = AbortSignal.any([active.abort.signal, AbortSignal.timeout(PHASE_TIMEOUT_MS)]);
     const before = await this.ctx.session.context({ sessionID }, { signal });
     active.turnSessionID = sessionID;
+    active.degradedCause = undefined;
     active.invalidReviewCalls = new Set();
     active.scope.invalidate();
     try {
@@ -257,7 +264,7 @@ export class Engine {
       await this.ctx.session.wait({ sessionID }, { signal });
       this.ensureRunning(active);
       const session = await this.assertSession(active, sessionID);
-      if (session.outcome !== 'succeeded') throw new Error(`${role} turn did not succeed.`);
+      if (session.outcome !== 'succeeded') throw new TurnFailure(`${role} turn did not succeed.`, 'model-error');
       const old = new Set(before.map((message) => message.id));
       const messages = (await this.ctx.session.context({ sessionID }, { signal })).filter((message) => !old.has(message.id));
       const tools = messages.flatMap((message) => message.content ?? []).filter((part) => part.type === 'tool');
@@ -268,7 +275,9 @@ export class Engine {
         const submission = role === 'reviewer' ? 'review_loop_submit_review' : 'review_loop_submit_fix';
         // A guard denial executed nothing; the fixer corrected course if a later same-tool call completed.
         const guardDenial = error?.type === 'permission.rejected' && (error.message ?? '').startsWith(DENIAL_PREFIX);
-        return (invalidInput || unknownTool || guardDenial) && tools.some((later) => later.name === (unknownTool ? submission : part.name) && later.state?.status === 'completed' && tools.indexOf(later) > tools.indexOf(part));
+        // A failed read-only source call changed nothing; it cannot invalidate a review submitted successfully after it.
+        const readOnlyProbe = role === 'reviewer' && part.name === 'review_loop_source' && tools.some((later) => later.name === 'review_loop_submit_review' && later.state?.status === 'completed' && tools.indexOf(later) > tools.indexOf(part));
+        return readOnlyProbe || ((invalidInput || unknownTool || guardDenial) && tools.some((later) => later.name === (unknownTool ? submission : part.name) && later.state?.status === 'completed' && tools.indexOf(later) > tools.indexOf(part)));
       };
       const failedTool = tools.find((part) => part.state?.status === 'error' && !recovered(part));
       if (failedTool) {
@@ -276,12 +285,24 @@ export class Engine {
         const type = DIAGNOSTIC_ERROR_TYPES.has(failedTool.state.error?.type) ? failedTool.state.error.type : 'unknown';
         throw new Error(`${role} turn had an incomplete result or unrecovered tool error: ${name} (${type}).`);
       }
-      if (messages.some((message) => message.error || (message.type === 'assistant' && ['length', 'content-filter', 'error', 'unknown'].includes(message.finish)))) throw new Error(`${role} turn had an incomplete result or unrecovered tool error.`);
+      const failedMessage = messages.find((message) => message.error || (message.type === 'assistant' && ['length', 'content-filter', 'error', 'unknown'].includes(message.finish)));
+      if (failedMessage) throw new TurnFailure(`${role} turn had an incomplete result or unrecovered tool error.`, ['length', 'content-filter'].includes(failedMessage.finish) ? 'length' : 'model-error');
       return messages;
     } catch (error) {
       await this.interrupt(active, sessionID);
-      throw error;
+      const cause = this.salvageCause(active, role, error, signal);
+      if (!cause) throw error;
+      active.degradedCause = cause;
+      return [];
     } finally { active.turnSessionID = undefined; active.invalidReviewCalls = undefined; }
+  }
+
+  // Only a reviewer's own failure after a valid submission qualifies; halts, tool errors and session drift stay fatal.
+  salvageCause(active, role, error, signal) {
+    if (role !== 'reviewer' || !active.run.state.submission || active.abort.signal.aborted || active.run.terminal) return undefined;
+    if (error instanceof TurnFailure) return error.cause;
+    if (error?.name === 'TimeoutError' || signal.aborted) return 'timeout';
+    return undefined;
   }
 
   submission(sessionID, input, role) {

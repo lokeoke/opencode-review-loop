@@ -288,3 +288,102 @@ test('gaps caused by omissions are deterministic and never retried', async (t) =
   assert.equal((await f.engine.status('fixer')).phase, 'incomplete');
   assert.equal(turns, 1);
 });
+
+test('a failed read-only source call does not discard a review that was submitted successfully afterwards', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async () => {
+    const { id: runId, round } = f.engine.activeFor('fixer').run.state;
+    await f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] });
+    f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [
+      { type: 'tool', id: 'probe', name: 'review_loop_source', state: { status: 'error', error: { type: 'unknown', message: 'Offset 900 is beyond the end of this diff (12 lines).' } } },
+      { type: 'tool', id: 'submit', name: 'review_loop_submit_review', state: { status: 'completed' } },
+    ] }]);
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.phase, 'passed', state.reason);
+});
+
+test('a failed submission call is still fatal even when source calls are tolerated', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async () => {
+    const { id: runId, round } = f.engine.activeFor('fixer').run.state;
+    await f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] });
+    f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [
+      { type: 'tool', id: 'submit', name: 'review_loop_submit_review', state: { status: 'error', error: { type: 'unknown', message: 'boom' } } },
+    ] }]);
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  assert.equal((await f.engine.status('fixer')).phase, 'stopped');
+});
+
+const majorIssue = { id: 'value-regression', severity: 'major', file: 'app.js', line: 1, problem: 'Incorrect value.', failure_scenario: 'Callers receive the wrong value.', suggested_fix: 'Restore the expected value.' };
+
+// Scripted reviewer: round 1 submits a major finding then fails with `fail`; round 2 (non-degraded) confirms the fix.
+async function degradedRun(t, fail) {
+  const f = await fixture(t);
+  f.setPrompt(async (input) => {
+    const { id: runId, round } = f.engine.activeFor('fixer').run.state;
+    if (input.sessionID === 'fixer') {
+      await writeFile(join(f.directory, 'app.js'), 'export const value = 3;\n');
+      await f.engine.submitFix('fixer', { runId, round, summary: 'Restored the value.', disputed: [] });
+      return;
+    }
+    f.sessions.get('reviewer').outcome = 'succeeded';
+    await f.engine.submitReview('reviewer', {
+      runId, round, complete: true, limitations: [], assumptions: [],
+      issues: round === 1 ? [majorIssue] : [],
+      resolutions: round === 1 ? [] : [{ id: majorIssue.id, status: 'fixed', evidence: 'app.js now returns the expected value.' }],
+    });
+    if (round === 1) fail(f);
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  return { f, state: await f.engine.status('fixer') };
+}
+
+test('a reviewer turn that fails after a valid submission is salvaged as a degraded review (model error)', async (t) => {
+  const { state } = await degradedRun(t, (f) => { f.sessions.get('reviewer').outcome = 'failed'; });
+  assert.equal(state.phase, 'passed', state.reason);
+  assert.deepEqual(state.history[0].degraded, { cause: 'model-error' });
+  assert.equal(state.history[1].degraded, undefined);
+});
+
+test('a phase timeout after a valid submission is salvaged as degraded', async (t) => {
+  const { state } = await degradedRun(t, (f) => {
+    const wait = f.ctx.session.wait;
+    f.ctx.session.wait = async (input, options) => {
+      f.ctx.session.wait = wait;
+      throw new DOMException('The operation timed out.', 'TimeoutError');
+    };
+  });
+  assert.equal(state.phase, 'passed', state.reason);
+  assert.deepEqual(state.history[0].degraded, { cause: 'timeout' });
+});
+
+test('a truncated reviewer response after a valid submission is salvaged as degraded', async (t) => {
+  const { state } = await degradedRun(t, (f) => f.messages.set('reviewer', [{ id: 'cut', type: 'assistant', finish: 'length', content: [] }]));
+  assert.equal(state.phase, 'passed', state.reason);
+  assert.deepEqual(state.history[0].degraded, { cause: 'length' });
+});
+
+test('a stop requested after a valid submission is never salvaged', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async () => {
+    const { id: runId, round } = f.engine.activeFor('fixer').run.state;
+    await f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [majorIssue], resolutions: [] });
+    f.sessions.get('reviewer').outcome = 'failed';
+    await f.engine.stop('fixer', 'Stopped by the user.');
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.phase, 'stopped');
+  assert.deepEqual(state.history, []);
+});
+
+test('an unrecovered non-source tool failure after a valid submission stays fatal', async (t) => {
+  const { state } = await degradedRun(t, (f) => f.messages.set('reviewer', [{ id: 'bad', type: 'assistant', finish: 'stop', content: [
+    { type: 'tool', id: 'edit', name: 'patch', state: { status: 'error', error: { type: 'unknown', message: 'boom' } } },
+  ] }]));
+  assert.equal(state.phase, 'stopped');
+  assert.match(state.reason, /unrecovered tool error/);
+});

@@ -82,7 +82,9 @@ test('wrong-session and duplicate submissions are rejected, and an unsuccessful 
   });
   const task = await f.engine.start('fixer', { base: 'main', checks: ['exit 0'], goal: 'Change value' });
   await task.done;
-  assert.equal((await f.engine.status('fixer')).phase, 'stopped');
+  const state = await f.engine.status('fixer');
+  assert.equal(state.phase, 'incomplete');
+  assert.match(state.reason, /degraded \(model-error\)/);
 });
 
 test('stop interrupts the active turn and rejects late results without scheduling a fixer', async (t) => {
