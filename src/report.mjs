@@ -9,6 +9,10 @@ export function formatFindings(issues = []) {
   return issues.length ? issues.map(formatFinding).join('\n') : 'none';
 }
 
+export function formatDegraded(history = []) {
+  return history.filter((entry) => entry.degraded).map((entry) => `Round ${entry.round} review degraded (${entry.degraded.cause}): findings accepted, no PASS possible from this round.`);
+}
+
 // Human-readable status; the raw state stays available through `status --json`.
 export function formatStatus(state) {
   const lines = [`Review loop ${String(state.phase).toUpperCase()} (${state.id})`];
@@ -19,6 +23,7 @@ export function formatStatus(state) {
   const checks = state.checks?.at(-1)?.results ?? [];
   lines.push(`Checks: ${checks.map((check) => `${check.command}: ${check.error ?? `exit ${check.exitCode}`}`).join('; ') || 'none completed'}`);
   for (const entry of state.history ?? []) if (entry.fix) lines.push(`Round ${entry.round} fix: ${entry.fix.summary}${entry.fix.disputed?.length ? ` (disputed: ${entry.fix.disputed.join(', ')})` : ''}`);
+  lines.push(...formatDegraded(state.history));
   if (state.omissions?.length) lines.push(`Omissions (${state.omissions.length}):`, ...state.omissions.slice(0, 10).map((entry) => `- ${entry.path}: ${entry.reason}`));
   const blocking = (state.issues ?? []).filter((issue) => BLOCKING_SEVERITIES.has(issue.severity)).length;
   lines.push(`Findings (${state.issues?.length ?? 0}, ${blocking} blocking):`, formatFindings(state.issues));
