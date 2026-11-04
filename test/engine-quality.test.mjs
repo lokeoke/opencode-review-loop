@@ -288,3 +288,31 @@ test('gaps caused by omissions are deterministic and never retried', async (t) =
   assert.equal((await f.engine.status('fixer')).phase, 'incomplete');
   assert.equal(turns, 1);
 });
+
+test('a failed read-only source call does not discard a review that was submitted successfully afterwards', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async () => {
+    const { id: runId, round } = f.engine.activeFor('fixer').run.state;
+    await f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] });
+    f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [
+      { type: 'tool', id: 'probe', name: 'review_loop_source', state: { status: 'error', error: { type: 'unknown', message: 'Offset 900 is beyond the end of this diff (12 lines).' } } },
+      { type: 'tool', id: 'submit', name: 'review_loop_submit_review', state: { status: 'completed' } },
+    ] }]);
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  const state = await f.engine.status('fixer');
+  assert.equal(state.phase, 'passed', state.reason);
+});
+
+test('a failed submission call is still fatal even when source calls are tolerated', async (t) => {
+  const f = await fixture(t);
+  f.setPrompt(async () => {
+    const { id: runId, round } = f.engine.activeFor('fixer').run.state;
+    await f.engine.submitReview('reviewer', { runId, round, complete: true, limitations: [], assumptions: [], issues: [], resolutions: [] });
+    f.messages.set('reviewer', [{ id: 'response', type: 'assistant', finish: 'stop', content: [
+      { type: 'tool', id: 'submit', name: 'review_loop_submit_review', state: { status: 'error', error: { type: 'unknown', message: 'boom' } } },
+    ] }]);
+  });
+  await (await f.engine.start('fixer', { base: 'main', checks: ['exit 0'] })).done;
+  assert.equal((await f.engine.status('fixer')).phase, 'stopped');
+});

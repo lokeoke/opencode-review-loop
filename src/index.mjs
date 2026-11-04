@@ -1,5 +1,6 @@
 import { ALREADY_RUNNING, Engine } from './engine.mjs';
 import { parseCommand } from './options.mjs';
+import { formatStatus } from './report.mjs';
 import { FIX_SCHEMA, REVIEW_SCHEMA } from './contracts.mjs';
 import { installGuards } from './security.mjs';
 import { permissionGate } from './compatibility.mjs';
@@ -104,9 +105,9 @@ export function createPlugin(dependencies = {}) {
             text = 'Cancellation requested; inspect progress for completion. Unconfirmed cleanup retains the lock.';
           } else {
             const state = await engine.status(sessionID);
-            text = state ? JSON.stringify(state, null, 2) : 'No review loop recorded for this worktree.';
+            text = state ? (options.json ? JSON.stringify(state, null, 2) : formatStatus(state)) : 'No review loop recorded for this worktree.';
           }
-        } catch (error) { text = `Review loop: ${error.message}\nUsage: /review-loop [<pull request URL or number>] [--base main] [--check "npm test"] [--reviewer-variant high] [--max-reviews 6] | status | stop`; }
+        } catch (error) { text = `Review loop: ${error.message}\nUsage: /review-loop [<pull request URL or number>] [--base main] [--check "npm test"] [--reviewer-variant high] [--max-reviews 6] | status [--json] | stop`; }
         return { text };
       };
       // The TUI and Desktop parts own the /review-loop slash command and call this RPC. Registering a slash command here
