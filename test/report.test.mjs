@@ -36,3 +36,12 @@ test('an interrupted review still shows its submitted findings, marked unverifie
   assert.match(text, /Unverified findings from the interrupted review/);
   assert.match(text, /\[major\] R1 lib\/data\.ts:182/);
 });
+
+test('degraded reviews are labelled with their cause in status', () => {
+  const text = formatStatus({
+    id: 'run-3', phase: 'incomplete', round: 2, maxReviews: 4, issues: [],
+    history: [{ round: 1, review: { issues: [issue] }, degraded: { cause: 'timeout' } }, { round: 2, review: { issues: [] }, degraded: { cause: 'length' } }],
+  });
+  assert.match(text, /Round 1 review degraded \(timeout\): findings accepted, no PASS possible from this round\./);
+  assert.match(text, /Round 2 review degraded \(length\)/);
+});
